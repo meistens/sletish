@@ -1,0 +1,2 @@
+export BOT_TOKEN="TOKEN"
+export PORT="1234"
