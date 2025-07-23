@@ -13,7 +13,7 @@ func main() {
 	logger.Init()
 	log := logger.Get()
 
-	err := godotenv.Load()
+	err := godotenv.Load(".env.local")
 	if err != nil {
 		log.Info("No .env file found, using system environment variables")
 	}
