@@ -1,3 +1,4 @@
 scratch*
-.env.*
+.env
 #internal/*
+pq-init/

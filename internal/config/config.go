@@ -18,3 +18,12 @@ func GetEnv(key, defaultValue string) string {
 	}
 	return defaultValue
 }
+
+func DatabaseConfig() (string, string, string, string, string) {
+	host := GetEnv("DB_HOST", "")
+	port := GetEnv("DB_PORT", "")
+	user := GetEnv("ADB_USER", "")
+	password := GetEnv("ADB_PASS", "")
+	name := GetEnv("DB_NAME", "")
+	return host, port, user, password, name
+}

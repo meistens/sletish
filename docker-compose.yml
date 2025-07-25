@@ -11,8 +11,27 @@ services:
     networks:
       - databases
 
+  postgres:
+    image: postgres:17.5-alpine3.21
+    container_name: ikoon
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASS}
+      - POSTGRES_DB=${DB_NAME}
+      # Pass ADB variables to the init script
+      - ADB_USER=${ADB_USER}
+      - ADB_PASS=${ADB_PASS}
+    ports:
+      - "5432:5432"
+    volumes:
+      - sletishDB:/var/lib/postgresql/data
+      # - ./postgres-init:/docker-entrypoint-initdb.d:ro,Z -- doesn't seem to work, ignoring init script, will do it manually and think of something else...
+    networks:
+      - databases
+
 volumes:
   sletishCache:
+  sletishDB:
 
 networks:
   databases:
