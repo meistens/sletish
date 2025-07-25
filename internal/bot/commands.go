@@ -6,7 +6,9 @@ import (
 	"sletish/internal/services"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
 
@@ -23,9 +25,19 @@ type Handler struct {
 	botToken     string
 }
 
-func NewHandler(logger *logrus.Logger) *Handler {
+func NewHandler(logger *logrus.Logger, redisClient *redis.Client) *Handler {
+	config := &services.ClientConfig{
+		BaseURL:    "https://api.jikan.moe/v4",
+		Timeout:    30 * time.Second,
+		RateLimit:  1 * time.Second,
+		MaxRetries: 3,
+		RetryDelay: 2 * time.Second,
+		UserAgent:  "AnimeTrackerBot/1.0",
+		Logger:     logger,
+		Redis:      redisClient,
+	}
 	return &Handler{
-		animeService: services.NewClient(),
+		animeService: services.NewClientWithConfig(config),
 		logger:       logger,
 		botToken:     os.Getenv("BOT_TOKEN"),
 	}
@@ -52,6 +64,8 @@ func (h *Handler) ProcessMessage(update *models.Update) {
 		h.handleStart(command)
 	case "/search":
 		h.handleSearch(command)
+	case "/help":
+		h.handleHelp(command)
 	default:
 		h.sendMessage(command.ChatID, "Unknown command. Use /start to see available commands")
 	}
@@ -100,6 +114,10 @@ func (h *Handler) handleSearch(cmd BotCommand) {
 
 	message := services.FormatAnimeMessage(searchResult.Data)
 	h.sendMessage(cmd.ChatID, message)
+}
+
+func (h *Handler) handleHelp(cmd BotCommand) {
+	h.handleStart(cmd)
 }
 
 func (h *Handler) sendMessage(chatID, text string) {

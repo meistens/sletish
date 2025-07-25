@@ -12,8 +12,9 @@ const telegramAPIURL = "https://api.telegram.org/bot"
 
 func SendTelegramMessage(botToken string, chatId int, text string) error {
 	response := models.TelegramResponse{
-		ChatId: chatId,
-		Text:   text,
+		ChatId:    chatId,
+		Text:      text,
+		ParseMode: "HTML",
 	}
 
 	jsonData, err := json.Marshal(response)
