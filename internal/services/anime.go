@@ -11,18 +11,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
 
 const (
-	jikanAPIURL      = "https://api.jikan.moe/v4"
-	defaultTimeout   = 30 * time.Second
-	rateLimitDelay   = 1 * time.Second
-	maxRetries       = 3
-	retryDelay       = 2 * time.Second
-	userAgent        = "AnimeTrackerBot/1.0"
-	maxSearchResults = 10
-	defaultCacheTime = 5 * time.Minute
+	jikanAPIURL        = "https://api.jikan.moe/v4"
+	defaultTimeout     = 30 * time.Second
+	rateLimitDelay     = 1 * time.Second
+	maxRetries         = 3
+	retryDelay         = 2 * time.Second
+	userAgent          = "AnimeTrackerBot/1.0"
+	maxSearchResults   = 10
+	searchCachePrefix  = "anime:search:"
+	detailsCachePrefix = "anime:details:"
+	searchCacheTTL     = 4 * time.Hour
+	detailsCacheTTL    = 24 * time.Hour
 )
 
 type Client struct {
@@ -31,6 +35,7 @@ type Client struct {
 	logger      *logrus.Logger
 	lastRequest time.Time
 	rateLimiter chan struct{}
+	redis       *redis.Client
 }
 
 type ClientConfig struct {
@@ -41,6 +46,7 @@ type ClientConfig struct {
 	RetryDelay time.Duration
 	UserAgent  string
 	Logger     *logrus.Logger
+	Redis      *redis.Client
 }
 
 func NewClient() *Client {
@@ -74,47 +80,57 @@ func NewClientWithConfig(config *ClientConfig) *Client {
 		},
 		logger:      config.Logger,
 		rateLimiter: make(chan struct{}, 1),
+		redis:       config.Redis,
 	}
 	client.rateLimiter <- struct{}{}
 	return client
 }
 
 func (c *Client) SearchAnime(query string) (*models.JikanSearchResponse, error) {
-	// EDIT
 	if strings.TrimSpace(query) == "" {
 		return nil, fmt.Errorf("search query cannot be empty")
 	}
 
-	// build url with query params
-	// Jikan API animeSearch query params as reference, more can be added/customized
+	c.logger.WithField("query", query).Info("Searching anime...")
+
+	// check cache first for existing query made
+	cacheKey := searchCachePrefix + query
+	if c.redis != nil {
+		cached, err := c.redis.Get(context.Background(), cacheKey).Result()
+		if err == nil {
+			c.logger.WithField("query", query).Info("Retrieved search results from cache")
+
+			var cachedResponse models.JikanSearchResponse
+			if err := json.Unmarshal([]byte(cached), &cachedResponse); err == nil {
+				return &cachedResponse, nil
+			}
+		}
+	}
+
+	// if no cache, use API
 	params := url.Values{}
 	params.Set("q", query)
 	params.Set("limit", strconv.Itoa(maxSearchResults))
-	//	params.Set("order_by", "score")
 	params.Set("sort", "desc")
-	//params.Set("type", "tv") // tweak to include other bits
-	//params.Set("status", "airing,completed")
-	//
 
 	searchURL := fmt.Sprintf("%s/anime?%s", c.baseURL, params.Encode()) // tweak params
 
-	// commented fromm this point is the OG code, ignore commented code blocks before this line
-	// resp, err := http.Get(searchURL)
 	resp, err := c.makeRequest(searchURL)
 	if err != nil {
 		return nil, err
 	}
-	//defer resp.Body.Close()
-
-	// body, err := io.ReadAll(resp.Body)
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	var searchResult models.JikanSearchResponse
-	// body <-> resp
 	if err := json.Unmarshal(resp, &searchResult); err != nil {
 		return nil, err
+	}
+
+	// cache results
+	if c.redis != nil {
+		responseJSON, err := json.Marshal(searchResult)
+		if err == nil {
+			c.redis.Set(context.Background(), cacheKey, responseJSON, searchCacheTTL)
+		}
 	}
 
 	return &searchResult, nil

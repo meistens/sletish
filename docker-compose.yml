@@ -3,7 +3,7 @@ services:
     image: redis:8-alpine
     container_name: sletish_cache
     restart: unless-stopped
-    command: redis-server
+    command: redis-server # redis.conf file preferrable for changes, setup later
     ports:
       - "6379:6379"
     volumes:
