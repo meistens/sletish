@@ -6,7 +6,9 @@ import (
 	"sletish/internal/services"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
 
@@ -23,9 +25,19 @@ type Handler struct {
 	botToken     string
 }
 
-func NewHandler(logger *logrus.Logger) *Handler {
+func NewHandler(logger *logrus.Logger, redisClient *redis.Client) *Handler {
+	config := &services.ClientConfig{
+		BaseURL:    "https://api.jikan.moe/v4",
+		Timeout:    30 * time.Second,
+		RateLimit:  1 * time.Second,
+		MaxRetries: 3,
+		RetryDelay: 2 * time.Second,
+		UserAgent:  "AnimeTrackerBot/1.0",
+		Logger:     logger,
+		Redis:      redisClient,
+	}
 	return &Handler{
-		animeService: services.NewClient(),
+		animeService: services.NewClientWithConfig(config),
 		logger:       logger,
 		botToken:     os.Getenv("BOT_TOKEN"),
 	}

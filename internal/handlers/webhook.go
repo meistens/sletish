@@ -6,10 +6,16 @@ import (
 	"sletish/internal/logger"
 	"sletish/internal/models"
 	"sletish/internal/services"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func handleUpdate(update *models.Update) {
-	commandHandler := bot.NewHandler(logger.Get())
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379", // env later
+	})
+
+	commandHandler := bot.NewHandler(logger.Get(), redisClient)
 	commandHandler.ProcessMessage(update)
 }
 
