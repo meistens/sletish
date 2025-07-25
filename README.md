@@ -1,32 +1,78 @@
-# WIP
-It's basically a TG Bot for - not yet there - tracking media
+# Anime Tracker Bot
 
-- Why do this instead of using some other services?
+A Telegram bot for searching anime information using the Jikan API (MyAnimeList unofficial API).
 
-I hate questions like this and similar. But nontheless, because I can?
+## Features
 
-- There are other services doing it and more, why waste your time building?
+- Search anime by name
+- View anime details including score, episodes, year, genres, and synopsis
+- Redis caching for improved performance
+- Rate limiting to respect API constraints
 
-I mean yeah, there's a 1001 places to get cheap food, accomodation, and other stuff. But it is all about preference
+## Setup
 
-I could be doing something intresting (more like making money) like an inventory management that does x to simplify the workflow of the staff (niche stuff), but I am not doing that... yet. But again, who wants to invest in someone targeting untapped niche markets when they can face big corpos?
+### Prerequisites
 
+- Go 1.24.4 or higher
+- Redis (optional, for caching)
+- Telegram Bot Token from @BotFather
 
-*Stressed out, this is the fourth rewrite, had to give the one-liner to Claude to split, my patience already streched thin*
+### Environment Variables
 
-Anyhoo, no deployments yet (no, I WON'T touch Vercel).
-All tests done using ngrok (it isn't perfect... yes, from the search functionality to... everything else)
+Create a `.env.local` file:
 
-But if you still want to try;
+```
+BOT_TOKEN=your_telegram_bot_token_here
+PORT=8080
+WEBHOOK_URL=https://your_domain.com/webhook
+R_HOST=localhost
+R_PORT=6379
+R_PASS=
+```
 
-1. get bot token from @BotFather on Telegram
-2. get a account on ngrok
-3. install ngrok for whatever platform you use
-4. follow ngrok instructions (terminal->authtoken)
-5. start ngrok (instructions literally in the docs)
-6. clone repo, provide your token from BotFather
-7. setup webhook for the bot (look it up)
-8. it should work (Jikan does not require API keys so yeah...)
+### Running Locally
 
-That is all there is to this.
-TBA on more changes...
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   go mod download
+   ```
+3. Start Redis (optional):
+   ```bash
+   docker-compose up redis -d
+   ```
+4. Run the bot:
+   ```bash
+   go run cmd/bot/main.go
+   ```
+
+### Setting up Webhook
+
+Set your webhook URL with Telegram:
+```bash
+curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
+     -d "url=https://your_domain.com/webhook"
+```
+
+## Commands (not yet updated to reflect rest of commands)
+
+- `/start` - Show welcome message and available commands
+- `/search <anime_name>` - Search for anime by name
+- `/help` - Show help information
+
+## Docker/Podman
+
+Start Redis cache:
+```bash
+docker-compose up -d
+OR
+podman-compose up -d
+```
+
+## API
+
+Uses Jikan API v4 (https://api.jikan.moe/v4) for anime data.
+
+## License
+
+MIT License
