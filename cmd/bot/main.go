@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"sletish/internal/database"
 	"sletish/internal/handlers"
 	"sletish/internal/logger"
 
@@ -27,6 +29,10 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	// database
+	database.MustInit(context.Background())
+	defer database.Close()
 
 	http.HandleFunc("/webhook", handlers.WebhookHandler(botToken))
 
