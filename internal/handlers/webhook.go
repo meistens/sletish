@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"sletish/internal/bot"
 	"sletish/internal/cache"
@@ -10,9 +11,10 @@ import (
 )
 
 func handleUpdate(update *models.Update) {
+	ctx := context.Background()
 	redisClient := cache.Get()
 	commandHandler := bot.NewHandler(logger.Get(), redisClient)
-	commandHandler.ProcessMessage(update)
+	commandHandler.ProcessMessage(ctx, update)
 }
 
 func WebhookHandler(botToken string) http.HandlerFunc {
