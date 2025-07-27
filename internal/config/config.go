@@ -5,7 +5,7 @@ import "os"
 // RedisConfig returns host, port, password
 func RedisConfig() (string, string, string) {
 	host := GetEnv("R_HOST", "redis")
-	port := GetEnv("R_HOST", "6379")
+	port := GetEnv("R_PORT", "6379")
 	password := GetEnv("R_PASS", "")
 	return host, port, password
 }
