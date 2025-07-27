@@ -2,9 +2,12 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sletish/internal/cache"
 	"sletish/internal/database"
 	"sletish/internal/logger"
+	"sletish/internal/models"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -66,4 +69,49 @@ func (s *UserService) EnsureUserExists(userID, username string) error {
 	}
 
 	return nil
+}
+
+// stash for now
+func (s *UserService) GetUser(userID string) (*models.AppUser, error) {
+	db := database.Get()
+	redis := cache.Get()
+	log := logger.Get()
+
+	if redis != nil {
+		cacheKey := userCachePrefix + userID
+		cached, err := redis.Get(context.Background(), cacheKey).Result()
+		if err == nil {
+			log.WithField("user_id", userID).Debug("Retrieved user from cache")
+
+			var cachedUser models.AppUser
+			if err := json.Unmarshal([]byte(cached), &cachedUser); err == nil {
+				return &cachedUser, nil
+			}
+		}
+	}
+
+	getQuery := `
+		SELECT id, username, platform, created_at, updated_at
+		FROM users
+		WHERE id = $1
+	`
+	var user models.AppUser
+	err := db.QueryRow(context.Background(), getQuery, userID).Scan(&user.ID,
+		&user.Username,
+		&user.Platform,
+		&user.CreatedAt,
+		&user.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	if redis != nil {
+		cacheKey := userCachePrefix + userID
+		userJSON, err := json.Marshal(user)
+		if err == nil {
+			redis.Set(context.Background(), cacheKey, userJSON, userCacheTTL)
+		}
+	}
+
+	return &user, nil
 }
