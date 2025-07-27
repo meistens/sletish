@@ -21,7 +21,7 @@ func NewUserService() *UserService {
 	return &UserService{}
 }
 
-func (s *UserService) UserExists(userID, username string) error {
+func (s *UserService) EnsureUserExists(userID, username string) error {
 	db := database.Get()
 	log := logger.Get()
 
@@ -31,16 +31,19 @@ func (s *UserService) UserExists(userID, username string) error {
 	}).Info("Checking if user exists...")
 
 	var exists bool
-	err := db.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1", userID).Scan(&exists)
+	err := db.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", userID).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("failed to check if user exists: %w", err)
 	}
+
+	now := time.Now()
+
 	if !exists {
 		insertQuery := `
 		INSERT INTO users (id, username, platform, created_at, updated_at)
 		VALUES ($1, $2, 'telegram', $3, $3)
 		`
-		_, err := db.Exec(context.Background(), insertQuery, userID, username, time.Now)
+		_, err := db.Exec(context.Background(), insertQuery, userID, username, now)
 		if err != nil {
 			return fmt.Errorf("failed to create user: %w", err)
 		}
@@ -56,10 +59,11 @@ func (s *UserService) UserExists(userID, username string) error {
 		WHERE id = $1 AND (username IS NULL OR username != $2)
 		`
 
-		_, err := db.Exec(context.Background(), updateQuery, userID, username, time.Now())
+		_, err := db.Exec(context.Background(), updateQuery, userID, username)
 		if err != nil {
 			return fmt.Errorf("failed to update user: %w", err)
 		}
 	}
+
 	return nil
 }
