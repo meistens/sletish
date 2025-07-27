@@ -3,18 +3,14 @@ package handlers
 import (
 	"net/http"
 	"sletish/internal/bot"
+	"sletish/internal/cache"
 	"sletish/internal/logger"
 	"sletish/internal/models"
 	"sletish/internal/services"
-
-	"github.com/redis/go-redis/v9"
 )
 
 func handleUpdate(update *models.Update) {
-	redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379", // env later
-	})
-
+	redisClient := cache.Get()
 	commandHandler := bot.NewHandler(logger.Get(), redisClient)
 	commandHandler.ProcessMessage(update)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"sletish/internal/cache"
 	"sletish/internal/database"
 	"sletish/internal/handlers"
 	"sletish/internal/logger"
@@ -12,6 +13,7 @@ import (
 )
 
 func main() {
+	// logger with logrus
 	logger.Init()
 	log := logger.Get()
 
@@ -33,6 +35,10 @@ func main() {
 	// database
 	database.MustInit(context.Background())
 	defer database.Close()
+
+	// cache
+	cache.Init()
+	defer cache.Close()
 
 	http.HandleFunc("/webhook", handlers.WebhookHandler(botToken))
 
