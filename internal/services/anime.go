@@ -93,7 +93,7 @@ func (c *Client) SearchAnime(query string) (*models.JikanSearchResponse, error) 
 
 	c.logger.WithField("query", query).Info("Searching anime...")
 
-	// check cache first for existing query made
+	// check cache first
 	cacheKey := searchCachePrefix + query
 	if c.redis != nil {
 		cached, err := c.redis.Get(context.Background(), cacheKey).Result()
@@ -103,17 +103,21 @@ func (c *Client) SearchAnime(query string) (*models.JikanSearchResponse, error) 
 			var cachedResponse models.JikanSearchResponse
 			if err := json.Unmarshal([]byte(cached), &cachedResponse); err == nil {
 				return &cachedResponse, nil
+			} else {
+				c.logger.WithError(err).Warn("Failed to unmarshal cached search result")
 			}
+		} else if err != redis.Nil {
+			c.logger.WithError(err).Warn("Failed to read from Redis")
 		}
 	}
 
-	// if no cache, use API
+	// if no cache, hit API
 	params := url.Values{}
 	params.Set("q", query)
 	params.Set("limit", strconv.Itoa(maxSearchResults))
 	params.Set("sort", "desc")
 
-	searchURL := fmt.Sprintf("%s/anime?%s", c.baseURL, params.Encode()) // tweak params
+	searchURL := fmt.Sprintf("%s/anime?%s", c.baseURL, params.Encode())
 
 	resp, err := c.makeRequest(searchURL)
 	if err != nil {
@@ -128,8 +132,14 @@ func (c *Client) SearchAnime(query string) (*models.JikanSearchResponse, error) 
 	// cache results
 	if c.redis != nil {
 		responseJSON, err := json.Marshal(searchResult)
-		if err == nil {
-			c.redis.Set(context.Background(), cacheKey, responseJSON, searchCacheTTL)
+		if err != nil {
+			c.logger.WithError(err).Warn("Failed to marshal search result for caching")
+		} else {
+			if err := c.redis.Set(context.Background(), cacheKey, responseJSON, searchCacheTTL).Err(); err != nil {
+				c.logger.WithError(err).Warn("Failed to write search result to cache")
+			} else {
+				c.logger.WithField("query", query).Debug("Search result cached successfully")
+			}
 		}
 	}
 

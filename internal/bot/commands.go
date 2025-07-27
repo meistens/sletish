@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"os"
 	"sletish/internal/models"
 	"sletish/internal/services"
@@ -21,6 +22,7 @@ type BotCommand struct {
 
 type Handler struct {
 	animeService *services.Client
+	userService  *services.UserService
 	logger       *logrus.Logger
 	botToken     string
 }
@@ -38,18 +40,26 @@ func NewHandler(logger *logrus.Logger, redisClient *redis.Client) *Handler {
 	}
 	return &Handler{
 		animeService: services.NewClientWithConfig(config),
+		userService:  services.NewUserService(),
 		logger:       logger,
 		botToken:     os.Getenv("BOT_TOKEN"),
 	}
 }
 
-func (h *Handler) ProcessMessage(update *models.Update) {
+func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 	if update.Message.Text == "" {
 		return
 	}
 
+	username := update.Message.From.Username
 	userID := strconv.Itoa(update.Message.From.Id)
 	chatID := strconv.Itoa(update.Message.Chat.Id)
+
+	// ensure user exists in DB/updated
+	if err := h.userService.EnsureUserExists(userID, username); err != nil {
+		h.logger.WithError(err).Error("user does not exist/failed to check if existing user")
+	}
+
 	text := strings.TrimSpace(update.Message.Text)
 
 	command := h.parseCommand(text, userID, chatID)
@@ -61,13 +71,13 @@ func (h *Handler) ProcessMessage(update *models.Update) {
 
 	switch command.Command {
 	case "/start":
-		h.handleStart(command)
+		h.handleStart(ctx, command)
 	case "/search":
-		h.handleSearch(command)
+		h.handleSearch(ctx, command)
 	case "/help":
-		h.handleHelp(command)
+		h.handleHelp(ctx, command)
 	default:
-		h.sendMessage(command.ChatID, "Unknown command. Use /start to see available commands")
+		h.sendMessage(ctx, command.ChatID, "Unknown command. Use /start to see available commands")
 	}
 }
 
@@ -85,49 +95,49 @@ func (h *Handler) parseCommand(text, userID, chatID string) BotCommand {
 	}
 }
 
-func (h *Handler) handleStart(cmd BotCommand) {
+func (h *Handler) handleStart(ctx context.Context, cmd BotCommand) {
 	welcomeMessage := `Welcome to My Media Search Bot!
 
-	/search name_of_anime
+/search name_of_anime
 
-	P.s: anime is the only command working at the moment`
+P.s: anime is the only command working at the moment`
 
-	h.sendMessage(cmd.ChatID, welcomeMessage)
+	h.sendMessage(ctx, cmd.ChatID, welcomeMessage)
 }
 
-func (h *Handler) handleSearch(cmd BotCommand) {
+func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 	if len(cmd.Args) == 0 {
-		h.sendMessage(cmd.ChatID, "Please provide an anime name to search. Example: /search Naruto")
+		h.sendMessage(ctx, cmd.ChatID, "Please provide an anime name to search. Example: /search Naruto")
 		return
 	}
 
 	query := strings.Join(cmd.Args, " ")
 
-	h.sendMessage(cmd.ChatID, "Searching for anime...")
+	h.sendMessage(ctx, cmd.ChatID, "Searching for anime...")
 
 	searchResult, err := h.animeService.SearchAnime(query)
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to search anime")
-		h.sendMessage(cmd.ChatID, "Error occurred while searching. Please try again later.")
+		h.sendMessage(ctx, cmd.ChatID, "Error occurred while searching. Please try again later.")
 		return
 	}
 
 	message := services.FormatAnimeMessage(searchResult.Data)
-	h.sendMessage(cmd.ChatID, message)
+	h.sendMessage(ctx, cmd.ChatID, message)
 }
 
-func (h *Handler) handleHelp(cmd BotCommand) {
-	h.handleStart(cmd)
+func (h *Handler) handleHelp(ctx context.Context, cmd BotCommand) {
+	h.handleStart(ctx, cmd)
 }
 
-func (h *Handler) sendMessage(chatID, text string) {
+func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
 	chatIDInt, err := strconv.Atoi(chatID)
 	if err != nil {
 		h.logger.WithError(err).Error("Invalid chat ID")
 		return
 	}
 
-	if err := services.SendTelegramMessage(h.botToken, chatIDInt, text); err != nil {
+	if err := services.SendTelegramMessage(ctx, h.botToken, chatIDInt, text); err != nil {
 		h.logger.WithError(err).Error("Failed to send message")
 	}
 }

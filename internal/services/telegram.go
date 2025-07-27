@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,7 +11,7 @@ import (
 
 const telegramAPIURL = "https://api.telegram.org/bot"
 
-func SendTelegramMessage(botToken string, chatId int, text string) error {
+func SendTelegramMessage(ctx context.Context, botToken string, chatId int, text string) error {
 	response := models.TelegramResponse{
 		ChatId:    chatId,
 		Text:      text,
@@ -24,11 +25,21 @@ func SendTelegramMessage(botToken string, chatId int, text string) error {
 
 	url := fmt.Sprintf("%s%s/sendMessage", telegramAPIURL, botToken)
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram API error: status %d", resp.StatusCode)
+	}
 
 	return nil
 }

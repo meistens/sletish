@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"sletish/internal/cache"
 	"sletish/internal/database"
 	"sletish/internal/handlers"
 	"sletish/internal/logger"
@@ -12,10 +13,11 @@ import (
 )
 
 func main() {
+	// logger with logrus
 	logger.Init()
 	log := logger.Get()
 
-	err := godotenv.Load(".env.local")
+	err := godotenv.Load()
 	if err != nil {
 		log.Info("No .env file found, using system environment variables")
 	}
@@ -33,6 +35,10 @@ func main() {
 	// database
 	database.MustInit(context.Background())
 	defer database.Close()
+
+	// cache
+	cache.Init()
+	defer cache.Close()
 
 	http.HandleFunc("/webhook", handlers.WebhookHandler(botToken))
 
