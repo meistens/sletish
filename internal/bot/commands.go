@@ -22,6 +22,7 @@ type BotCommand struct {
 
 type Handler struct {
 	animeService *services.Client
+	userService  *services.UserService
 	logger       *logrus.Logger
 	botToken     string
 }
@@ -39,6 +40,7 @@ func NewHandler(logger *logrus.Logger, redisClient *redis.Client) *Handler {
 	}
 	return &Handler{
 		animeService: services.NewClientWithConfig(config),
+		userService:  services.NewUserService(),
 		logger:       logger,
 		botToken:     os.Getenv("BOT_TOKEN"),
 	}
@@ -49,8 +51,15 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 		return
 	}
 
+	username := update.Message.From.Username
 	userID := strconv.Itoa(update.Message.From.Id)
 	chatID := strconv.Itoa(update.Message.Chat.Id)
+
+	// ensure user exists in DB/updated
+	if err := h.userService.EnsureUserExists(userID, username); err != nil {
+		h.logger.WithError(err).Error("user does not exist/failed to check if existing user")
+	}
+
 	text := strings.TrimSpace(update.Message.Text)
 
 	command := h.parseCommand(text, userID, chatID)
