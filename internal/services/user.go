@@ -115,3 +115,15 @@ func (s *UserService) GetUser(userID string) (*models.AppUser, error) {
 
 	return &user, nil
 }
+
+func (s *UserService) invalidateUserCache(userID string) {
+	redis := cache.Get()
+	if redis == nil {
+		return
+	}
+
+	cacheKey := userCachePrefix + userID
+	redis.Del(context.Background(), cacheKey)
+}
+
+// end
