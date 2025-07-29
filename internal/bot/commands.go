@@ -2,14 +2,11 @@ package bot
 
 import (
 	"context"
-	"os"
 	"sletish/internal/models"
 	"sletish/internal/services"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
 
@@ -25,24 +22,15 @@ type Handler struct {
 	userService  *services.UserService
 	logger       *logrus.Logger
 	botToken     string
+	// UPDATE WITH MORE SERVICES ADDED IN THE FUTURE
 }
 
-func NewHandler(logger *logrus.Logger, redisClient *redis.Client) *Handler {
-	config := &services.ClientConfig{
-		BaseURL:    "https://api.jikan.moe/v4",
-		Timeout:    30 * time.Second,
-		RateLimit:  1 * time.Second,
-		MaxRetries: 3,
-		RetryDelay: 2 * time.Second,
-		UserAgent:  "AnimeTrackerBot/1.0",
-		Logger:     logger,
-		Redis:      redisClient,
-	}
+func NewHandler(animeService *services.Client, userService *services.UserService, logger *logrus.Logger, botToken string) *Handler {
 	return &Handler{
-		animeService: services.NewClientWithConfig(config),
-		userService:  services.NewUserService(),
+		animeService: animeService,
+		userService:  userService,
 		logger:       logger,
-		botToken:     os.Getenv("BOT_TOKEN"),
+		botToken:     botToken,
 	}
 }
 
@@ -55,12 +43,12 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 	userID := strconv.Itoa(update.Message.From.Id)
 	chatID := strconv.Itoa(update.Message.Chat.Id)
 
-	// Always try to ensure user exists, but don't block commands if it fails
-	go func() {
-		if err := h.userService.EnsureUserExists(userID, username); err != nil {
-			h.logger.WithError(err).Error("failed to ensure user exists")
-		}
-	}()
+	// Ensure user exists with proper error handling
+	if err := h.userService.EnsureUserExists(userID, username); err != nil {
+		h.logger.WithError(err).Error("failed to ensure user exists")
+		h.sendMessage(ctx, chatID, "Sorry, I'm having trouble accessing your account. Please try again.")
+		return
+	}
 
 	text := strings.TrimSpace(update.Message.Text)
 	command := h.parseCommand(text, userID, chatID)

@@ -4,16 +4,17 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"sletish/internal/cache"
-	"sletish/internal/database"
+	"os/signal"
+	"sletish/internal/container"
 	"sletish/internal/handlers"
 	"sletish/internal/logger"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
-	// logger with logrus
 	logger.Init()
 	log := logger.Get()
 
@@ -32,16 +33,49 @@ func main() {
 		port = "8080"
 	}
 
-	// database
-	database.MustInit(context.Background())
-	defer database.Close()
+	// graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// cache
-	cache.Init()
-	defer cache.Close()
+	// init. DI
+	container, err := container.New(ctx)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to initialize container")
+	}
+	defer container.Close()
 
-	http.HandleFunc("/webhook", handlers.WebhookHandler(botToken))
+	// HTTP Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/webhook", handlers.WebhookHandler(container, botToken))
 
-	log.Infof("Bot starting on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// start server in goroutine
+	go func() {
+		log.Infof("Bot starting on port %s", port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.WithError(err).Fatal("Server failed to start")
+		}
+	}()
+
+	// graceful shutdown sigint
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Info("Shutting down server...")
+
+	// with timeout
+	sdCtx, sdCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer sdCancel()
+	if err := server.Shutdown(sdCtx); err != nil {
+		log.WithError(err).Error("Server forced to shutdown")
+	}
+
+	log.Info("Server exited")
 }
