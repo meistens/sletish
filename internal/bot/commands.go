@@ -55,14 +55,16 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 	userID := strconv.Itoa(update.Message.From.Id)
 	chatID := strconv.Itoa(update.Message.Chat.Id)
 
-	// ensure user exists in DB/updated
-	if err := h.userService.EnsureUserExists(userID, username); err != nil {
-		h.logger.WithError(err).Error("user does not exist/failed to check if existing user")
-	}
+	// Always try to ensure user exists, but don't block commands if it fails
+	go func() {
+		if err := h.userService.EnsureUserExists(userID, username); err != nil {
+			h.logger.WithError(err).Error("failed to ensure user exists")
+		}
+	}()
 
 	text := strings.TrimSpace(update.Message.Text)
-
 	command := h.parseCommand(text, userID, chatID)
+
 	h.logger.WithFields(logrus.Fields{
 		"user_id": userID,
 		"command": command.Command,
@@ -79,7 +81,7 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 	case "/help":
 		h.handleHelp(ctx, command)
 	default:
-		h.sendMessage(ctx, command.ChatID, "Unknown command. Use /start to see available commands")
+		h.sendMessage(ctx, command.ChatID, "Unknown command. Use /help to see available commands")
 	}
 }
 
@@ -98,25 +100,12 @@ func (h *Handler) parseCommand(text, userID, chatID string) BotCommand {
 }
 
 func (h *Handler) handleStart(ctx context.Context, cmd BotCommand) {
-	// Get user info to personalize the welcome message
-	user, err := h.userService.GetUser(cmd.UserID)
-	if err != nil {
-		h.logger.WithError(err).Warn("Failed to get user info for welcome message")
-	}
-
 	welcomeMessage := "Welcome to My Media Search Bot!"
-	if user != nil && user.Username != "" {
-		welcomeMessage = "Welcome back, " + user.Username + "!"
-	}
 
-	welcomeMessage += `
-
-Available commands:
-/search <anime_name> - Search for anime
-/profile - View your profile information
-/help - Show this help message
-
-P.s: anime is the only search working at the moment`
+	h.logger.WithFields(logrus.Fields{
+		"user_id": cmd.UserID,
+		"chat_id": cmd.ChatID,
+	}).Info("Sending start message")
 
 	h.sendMessage(ctx, cmd.ChatID, welcomeMessage)
 }
@@ -168,7 +157,9 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 }
 
 func (h *Handler) handleHelp(ctx context.Context, cmd BotCommand) {
-	h.handleStart(ctx, cmd)
+	helpMessage := "Available Commands:\n\n/start - Show welcome message\n/search &lt;anime_name&gt; - Search for anime\n/profile - View your profile\n/help - Show this help"
+
+	h.sendMessage(ctx, cmd.ChatID, helpMessage)
 }
 
 func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
@@ -179,6 +170,13 @@ func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
 	}
 
 	if err := services.SendTelegramMessage(ctx, h.botToken, chatIDInt, text); err != nil {
-		h.logger.WithError(err).Error("Failed to send message")
+		h.logger.WithFields(logrus.Fields{
+			"chat_id": chatIDInt,
+			"error":   err.Error(),
+		}).Error("Failed to send message")
+	} else {
+		h.logger.WithFields(logrus.Fields{
+			"chat_id": chatIDInt,
+		}).Debug("Message sent successfully")
 	}
 }
