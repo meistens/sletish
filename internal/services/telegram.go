@@ -20,25 +20,25 @@ func SendTelegramMessage(ctx context.Context, botToken string, chatId int, text 
 
 	jsonData, err := json.Marshal(response)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	url := fmt.Sprintf("%s%s/sendMessage", telegramAPIURL, botToken)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram API error: status %d", resp.StatusCode)
+		return fmt.Errorf("telegram API error (status %d)", resp.StatusCode)
 	}
 
 	return nil
