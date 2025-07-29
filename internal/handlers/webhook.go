@@ -1,14 +1,21 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"sletish/internal/bot"
 	"sletish/internal/container"
 	"sletish/internal/services"
+	"time"
 )
 
 func WebhookHandler(container *container.Container, botToken string) http.HandlerFunc {
-	commandHandler := bot.NewHandler(container.AnimeService, container.UserService, container.Logger, botToken)
+	commandHandler := bot.NewHandler(
+		container.AnimeService,
+		container.UserService,
+		container.Logger,
+		botToken,
+	)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -23,8 +30,10 @@ func WebhookHandler(container *container.Container, botToken string) http.Handle
 			return
 		}
 
-		ctx := r.Context()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
 		go func() {
+			defer cancel()
 			commandHandler.ProcessMessage(ctx, update)
 		}()
 
