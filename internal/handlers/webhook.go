@@ -1,23 +1,15 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 	"sletish/internal/bot"
-	"sletish/internal/cache"
-	"sletish/internal/logger"
-	"sletish/internal/models"
+	"sletish/internal/container"
 	"sletish/internal/services"
 )
 
-func handleUpdate(update *models.Update) {
-	ctx := context.Background()
-	redisClient := cache.Get()
-	commandHandler := bot.NewHandler(logger.Get(), redisClient)
-	commandHandler.ProcessMessage(ctx, update)
-}
+func WebhookHandler(container *container.Container, botToken string) http.HandlerFunc {
+	commandHandler := bot.NewHandler(container.AnimeService, container.UserService, container.Logger, botToken)
 
-func WebhookHandler(botToken string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -26,12 +18,15 @@ func WebhookHandler(botToken string) http.HandlerFunc {
 
 		update, err := services.ParseTelegramRequest(r)
 		if err != nil {
-			logger.Get().Errorf("Error parsing request: %v", err)
+			container.Logger.WithError(err).Error("Error parsing request")
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
 
-		go handleUpdate(update)
+		ctx := r.Context()
+		go func() {
+			commandHandler.ProcessMessage(ctx, update)
+		}()
 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
