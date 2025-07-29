@@ -198,7 +198,7 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 			message.WriteString(fmt.Sprintf("Synopsis: %s\n", synopsis))
 		}
 
-		message.WriteString(fmt.Sprintf("<a href=\"https://myanimelist.net/anime/%d\">View on MyAnimeList</a>\n", anime.MalId))
+		message.WriteString(fmt.Sprintf("<a href=\"https://myanimelist.net/anime/%d\">View on MyAnimeList</a>\n", anime.MalID))
 		message.WriteString("\n")
 	}
 
