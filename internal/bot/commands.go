@@ -74,6 +74,8 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 		h.handleStart(ctx, command)
 	case "/search":
 		h.handleSearch(ctx, command)
+	case "/profile":
+		h.handleProfile(ctx, command)
 	case "/help":
 		h.handleHelp(ctx, command)
 	default:
@@ -96,13 +98,52 @@ func (h *Handler) parseCommand(text, userID, chatID string) BotCommand {
 }
 
 func (h *Handler) handleStart(ctx context.Context, cmd BotCommand) {
-	welcomeMessage := `Welcome to My Media Search Bot!
+	// Get user info to personalize the welcome message
+	user, err := h.userService.GetUser(cmd.UserID)
+	if err != nil {
+		h.logger.WithError(err).Warn("Failed to get user info for welcome message")
+	}
 
-/search name_of_anime
+	welcomeMessage := "Welcome to My Media Search Bot!"
+	if user != nil && user.Username != "" {
+		welcomeMessage = "Welcome back, " + user.Username + "!"
+	}
 
-P.s: anime is the only command working at the moment`
+	welcomeMessage += `
+
+Available commands:
+/search <anime_name> - Search for anime
+/profile - View your profile information
+/help - Show this help message
+
+P.s: anime is the only search working at the moment`
 
 	h.sendMessage(ctx, cmd.ChatID, welcomeMessage)
+}
+
+func (h *Handler) handleProfile(ctx context.Context, cmd BotCommand) {
+	user, err := h.userService.GetUser(cmd.UserID)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to get user profile")
+		h.sendMessage(ctx, cmd.ChatID, "Sorry, I couldn't retrieve your profile information.")
+		return
+	}
+
+	profileMessage := "<b>Your Profile:</b>\n\n"
+	profileMessage += "User ID: " + user.ID + "\n"
+
+	if user.Username != "" {
+		profileMessage += "Username: @" + user.Username + "\n"
+	}
+
+	profileMessage += "Platform: " + user.Platform + "\n"
+	profileMessage += "Member since: " + user.CreatedAt.Format("January 2, 2006") + "\n"
+
+	if !user.UpdatedAt.Equal(user.CreatedAt) {
+		profileMessage += "Last updated: " + user.UpdatedAt.Format("January 2, 2006") + "\n"
+	}
+
+	h.sendMessage(ctx, cmd.ChatID, profileMessage)
 }
 
 func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
