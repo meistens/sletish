@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sletish/internal/models"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,21 +15,25 @@ import (
 )
 
 const (
-	userCachePrefix = "user:info:"
-	userCacheTTL    = 30 * time.Minute
+	userCachePrefix  = "user:info:"
+	userCacheTTL     = 30 * time.Minute
+	animeCachePrefix = "anime:details:"
+	animeCacheTTL    = 1 * time.Hour
 )
 
 type UserService struct {
 	db     *pgxpool.Pool
 	redis  *redis.Client
 	logger *logrus.Logger
+	client *Client
 }
 
-func NewUserService(db *pgxpool.Pool, redis *redis.Client, logger *logrus.Logger) *UserService {
+func NewUserService(db *pgxpool.Pool, redis *redis.Client, logger *logrus.Logger, client *Client) *UserService {
 	return &UserService{
 		db:     db,
 		redis:  redis,
 		logger: logger,
+		client: client,
 	}
 }
 
@@ -123,6 +129,145 @@ func (s *UserService) GetUser(userID string) (*models.AppUser, error) {
 	}
 
 	return &user, nil
+}
+
+func (s *UserService) AddToUserList(userID string, animeID int, status models.Status) error {
+	s.logger.WithFields(logrus.Fields{
+		"user_id":  userID,
+		"anime_id": animeID,
+		"status":   status,
+	}).Info("Adding anime to user list...")
+
+	media, err := s.getOrCreateMediaByID(animeID)
+	if err != nil {
+		return fmt.Errorf("failed to get/create media: %w", err)
+	}
+
+	// check if user has anime on their list
+	var existingAnimeID int
+	checkQuery := `
+	SELECT id
+	FROM user_media
+	WHERE user_id = $1
+	AND media_id = $2
+	`
+
+	err = s.db.QueryRow(context.Background(), checkQuery, userID, media.ID).Scan(&existingAnimeID)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("failed to check existing user media: %w", err)
+	}
+
+	now := time.Now()
+
+	if err == sql.ErrNoRows {
+		insertQuery := `
+			INSERT INTO user_media (user_id, media_id, status, created_at)
+			VALUES ($1, $2, $3, $4)
+			`
+
+		_, err = s.db.Exec(context.Background(), insertQuery, userID, media.ID, status, now)
+		if err != nil {
+			return fmt.Errorf("failed to insert user media: %w", err)
+		}
+		s.logger.Info("Added anime to user list")
+	} else {
+		updateQuery := `
+			UPDATE user_media
+			SET status = $3,
+			WHERE user_id = $1 AND media_id = $2
+			`
+
+		_, err = s.db.Exec(context.Background(), updateQuery, userID, media.ID, status, now)
+
+		if err != nil {
+			return fmt.Errorf("failed to update user media: %w", err)
+		}
+		s.logger.Info("Updated anime status in user list")
+	}
+
+	s.invalidateUserCache(userID)
+	return nil
+}
+
+func (s *UserService) getOrCreateMediaByID(animeID int) (*models.Media, error) {
+	media, err := s.getMediaByExternalID(strconv.Itoa(animeID))
+	if err == nil {
+		return media, nil
+	}
+
+	// fetch from API if no anime is found on list
+	jikanAnime, err := s.client.GetAnimeByID(animeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch anime from Jikan: %w", err)
+	}
+
+	// create record
+	return s.createMediaFromJikan(*jikanAnime)
+}
+
+// /
+func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, error) {
+	query := `
+	SELECT id, external_id, title, type, description, release_date, poster_url, rating, created_at
+	FROM media
+	WHERE external_id = $1
+	`
+
+	var media models.Media
+	err := s.db.QueryRow(context.Background(), query, externalID).Scan(media.ID, media.ExternalID, media.Title, media.Type, media.Description,
+		media.ReleaseDate, media.PosterURL, media.Rating, media.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &media, nil
+}
+
+func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models.Media, error) {
+	externalID := strconv.Itoa(jikanAnime.MalID)
+	title := jikanAnime.Title
+	description := jikanAnime.Synopsis
+	releaseDate := ""
+	posterURL := ""
+	rating := 0.0
+
+	if jikanAnime.Score > 0 {
+		rating = jikanAnime.Score
+	}
+	if len(jikanAnime.Images.JPG.ImageURL) > 0 {
+		posterURL = jikanAnime.Images.JPG.ImageURL
+	}
+	if len(description) > 1000 {
+		description = description[:1000] + "..."
+	}
+
+	// Insert media record
+	insertQuery := `
+		INSERT INTO media (external_id, title, type, description, release_date, poster_url, rating, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, external_id, title, type, description, release_date, poster_url, rating, created_at
+	`
+
+	var media models.Media
+	now := time.Now()
+
+	err := s.db.QueryRow(context.Background(), insertQuery, externalID, title, "anime", description, releaseDate, posterURL, rating, now).Scan(
+		&media.ID, &media.ExternalID, &media.Title, &media.Type, &media.Description,
+		&media.ReleaseDate, &media.PosterURL, &media.Rating, &media.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert media: %w", err)
+	}
+
+	// Cache anime details
+	if s.redis != nil {
+		cacheKey := animeCachePrefix + externalID
+		animeJSON, err := json.Marshal(jikanAnime)
+		if err == nil {
+			s.redis.Set(context.Background(), cacheKey, animeJSON, animeCacheTTL)
+		}
+	}
+
+	return &media, nil
 }
 
 func (s *UserService) invalidateUserCache(userID string) {

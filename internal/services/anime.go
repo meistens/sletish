@@ -327,3 +327,68 @@ func (c *Client) waitForRetry(attempt int) {
 		time.Sleep(delay)
 	}
 }
+
+func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
+	if id <= 0 {
+		return nil, fmt.Errorf("invalid anime ID: %d", id)
+	}
+
+	c.logger.WithField("anime_id", id).Info("Fetching anime by ID...")
+
+	// Check cache first
+	cacheKey := detailsCachePrefix + strconv.Itoa(id)
+	if c.redis != nil {
+		cached, err := c.redis.Get(context.Background(), cacheKey).Result()
+		if err == nil {
+			c.logger.WithField("anime_id", id).Info("Retrieved anime details from cache")
+
+			var cachedAnime models.AnimeData
+			if err := json.Unmarshal([]byte(cached), &cachedAnime); err == nil {
+				return &cachedAnime, nil
+			} else {
+				c.logger.WithError(err).Warn("Failed to unmarshal cached anime details")
+			}
+		} else if err != redis.Nil {
+			c.logger.WithError(err).Warn("Failed to read from Redis")
+		}
+	}
+
+	// Build the correct URL for single anime endpoint
+	reqURL := fmt.Sprintf("%s/anime/%d", c.baseURL, id)
+
+	resp, err := c.makeRequest(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get anime by ID %d: %w", id, err)
+	}
+
+	// Single anime endpoint returns different structure than search
+	var animeResp struct {
+		Data models.AnimeData `json:"data"`
+	}
+
+	if err := json.Unmarshal(resp, &animeResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal anime response for ID %d: %w", id, err)
+	}
+
+	// Cache the result
+	if c.redis != nil {
+		animeJSON, err := json.Marshal(animeResp.Data)
+		if err != nil {
+			c.logger.WithError(err).Warn("Failed to marshal anime for caching")
+		} else {
+			if err := c.redis.Set(context.Background(), cacheKey, animeJSON, detailsCacheTTL).Err(); err != nil {
+				c.logger.WithError(err).Warn("Failed to write anime details to cache")
+			} else {
+				c.logger.WithField("anime_id", id).Debug("Anime details cached successfully")
+			}
+		}
+	}
+
+	// Log successful fetch
+	c.logger.WithFields(logrus.Fields{
+		"anime_id": id,
+		"title":    animeResp.Data.Title,
+	}).Info("Anime details fetched successfully")
+
+	return &animeResp.Data, nil
+}

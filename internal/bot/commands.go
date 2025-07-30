@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"sletish/internal/models"
 	"sletish/internal/services"
 	"strconv"
@@ -66,6 +67,8 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 		h.handleSearch(ctx, command)
 	case "/profile":
 		h.handleProfile(ctx, command)
+	case "/add":
+		h.handleAdd(ctx, command)
 	case "/help":
 		h.handleHelp(ctx, command)
 	default:
@@ -155,6 +158,13 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 		return
 	}
 
+	// no results found for query
+	if len(searchResult.Data) == 0 {
+		h.sendMessage(ctx, cmd.ChatID, "No anime found matching your search")
+		return
+	}
+
+	// TODO: refine formatting
 	message := services.FormatAnimeMessage(searchResult.Data)
 	h.sendMessage(ctx, cmd.ChatID, message)
 }
@@ -163,6 +173,42 @@ func (h *Handler) handleHelp(ctx context.Context, cmd BotCommand) {
 	helpMessage := "Available Commands:\n\n/start - Show welcome message\n/search &lt;anime_name&gt; - Search for anime\n/profile - View your profile\n/help - Show this help"
 
 	h.sendMessage(ctx, cmd.ChatID, helpMessage)
+}
+
+func (h *Handler) handleAdd(ctx context.Context, cmd BotCommand) {
+	if len(cmd.Args) < 2 {
+		h.sendMessage(ctx, cmd.ChatID, "Usage: /add **anime_id** **status**\nStatus can be: watching, completed, on_hold, dropped, watchlist")
+		return
+	}
+
+	h.sendMessage(ctx, cmd.ChatID, "Adding...")
+
+	animeID, err := strconv.Atoi(cmd.Args[0])
+	if err != nil {
+		h.logger.WithFields(logrus.Fields{
+			"cmd_args": cmd.Args,
+			"user_id":  cmd.UserID,
+			"error":    err.Error(),
+		}).Warn("Invalid anime ID")
+
+		h.sendMessage(ctx, cmd.ChatID, "Invalid anime ID. Use a valid ID for search")
+		return
+	}
+
+	status := models.Status(cmd.Args[1])
+	if !isValidStatus(status) {
+		h.sendMessage(context.Background(), cmd.ChatID, "Invalid status. Valid options are: watching, completed, on_hold, dropped, watchlist")
+		return
+	}
+
+	// add to user personalized list
+	if err := h.userService.AddToUserList(cmd.UserID, animeID, status); err != nil {
+		h.logger.WithError(err).Error("Failed to add anime to user list")
+		h.sendMessage(context.Background(), cmd.ChatID, "Sorry, I couldn't add the anime to your list. Please try again later.")
+		return
+	}
+
+	h.sendMessage(context.Background(), cmd.ChatID, fmt.Sprintf("Successfully added anime to your list with status: %s", status))
 }
 
 func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
@@ -182,4 +228,21 @@ func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
 			"chat_id": chatIDInt,
 		}).Debug("Message sent successfully")
 	}
+}
+
+func isValidStatus(status models.Status) bool {
+	validStatuses := []models.Status{
+		models.StatusCompleted,
+		models.StatusDropped,
+		models.StatusOnHold,
+		models.StatusWatching,
+		models.StatusWatchlist,
+	}
+
+	for _, validStatus := range validStatuses {
+		if status == validStatus {
+			return true
+		}
+	}
+	return false
 }
