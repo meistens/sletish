@@ -341,8 +341,9 @@ func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, er
 	`
 
 	var media models.Media
-	err := s.db.QueryRow(context.Background(), query, externalID).Scan(media.ID, media.ExternalID, media.Title, media.Type, media.Description,
-		media.ReleaseDate, media.PosterURL, media.Rating, media.CreatedAt)
+	err := s.db.QueryRow(context.Background(), query, externalID).Scan(
+		&media.ID, &media.ExternalID, &media.Title, &media.Type, &media.Description,
+		&media.ReleaseDate, &media.PosterURL, &media.Rating, &media.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
