@@ -138,6 +138,12 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 		"status":   status,
 	}).Info("Adding anime to user list...")
 
+	// check if anime exists in the API
+	_, err := s.client.GetAnimeByID(animeID)
+	if err != nil {
+		return fmt.Errorf("anime with ID %d not found: %w", animeID, err)
+	}
+
 	media, err := s.getOrCreateMediaByID(animeID)
 	if err != nil {
 		return fmt.Errorf("failed to get/create media: %w", err)
