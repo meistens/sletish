@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Environment files
+.env
+.env.local
+.env.*
+
+# Documentation
+README.md
+*.md
+
+# Scratch files
+scratch*
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Logs
+*.log
+
+# DB init
+pq-init/

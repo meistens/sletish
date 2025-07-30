@@ -2,72 +2,67 @@
 
 A Telegram bot for searching anime information using the Jikan API (MyAnimeList unofficial API).
 
-## Features
+## Prerequisites
 
-- Search anime by name
-- View anime details including score, episodes, year, genres, and synopsis
-- Redis caching for improved performance
-- Rate limiting to respect API constraints
+- Go
+- PostgreSQL
+- Redis
+- Your Telegram Bot Token from @BotFather
 
-## Setup
+You can change the setup to your own taste (change db, cache handling, etc...)
 
-### Prerequisites
+## Local Setup
 
-- Go 1.24.4 or higher
-- Redis (optional, for caching)
-- Telegram Bot Token from @BotFather
+### 1. Clone and Install Dependencies
 
-### Environment Variables
-
-Create a `.env.local` file:
-
-```
-BOT_TOKEN=your_telegram_bot_token_here
-PORT=8080
-WEBHOOK_URL=https://your_domain.com/webhook
-R_HOST=localhost
-R_PORT=6379
-R_PASS=
+```bash
+git clone <repository_url>
+cd sletish
+go mod download
 ```
 
-### Running Locally
+### 2. Environment Configuration
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   go mod download
-   ```
-3. Start Redis (optional):
-   ```bash
-   docker-compose up redis -d
-   ```
-4. Run the bot:
-   ```bash
-   go run cmd/bot/main.go
-   ```
+Create a `.env` file, update it to match whatever your personal environment is
 
-### Setting up Webhook
+### 3. Database Setup
 
-Set your webhook URL with Telegram:
+Start PostgreSQL and Redis using Docker/Podman/Your custom choice:
+
+```bash
+docker-compose up -d
+```
+
+Run database migrations:
+
+```bash
+# Install migrate tool (if not installed)
+go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# Run migrations
+migrate -path migrations -database "postgres://app_user:your_app_password@localhost:5432/sletish?sslmode=disable" up
+```
+
+### 4. Run the Bot
+
+```bash
+go run cmd/bot/main.go
+```
+
+### 5. Set Webhook (for production)
+
 ```bash
 curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
      -d "url=https://your_domain.com/webhook"
 ```
 
-## Commands (not yet updated to reflect rest of commands)
+## Available Commands
 
-- `/start` - Show welcome message and available commands
+- `/start` - Welcome message and bot introduction
 - `/search <anime_name>` - Search for anime by name
-- `/help` - Show help information
+- `/profile` - View your user profile information
+- `/help` - Show available commands
 
-## Docker/Podman
-
-Start Redis cache:
-```bash
-docker-compose up -d
-OR
-podman-compose up -d
-```
 
 ## API
 

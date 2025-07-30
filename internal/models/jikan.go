@@ -6,7 +6,7 @@ type JikanSearchResponse struct {
 }
 
 type AnimeData struct {
-	MalId    int     `json:"mal_id"`
+	MalID    int     `json:"mal_id"`
 	Title    string  `json:"title"`
 	Score    float64 `json:"score"`
 	Episodes int     `json:"episodes"`

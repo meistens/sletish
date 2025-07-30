@@ -13,9 +13,9 @@ const (
 )
 
 type AppUser struct {
-	ID        string    `json:"id" db:"id"`
-	Username  string    `json:"username" db:"username"`
-	Platform  string    `json:"platform" db:"platform"`
+	ID        string    `json:"id" db:"id" validate:"required"`
+	Username  string    `json:"username" db:"username" validate:"max=50"`
+	Platform  string    `json:"platform" db:"platform" validate:"required,oneof=telegram"` // **NOTE:MODIFY FOR FUTURE PLATFORMS**
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
