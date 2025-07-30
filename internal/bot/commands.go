@@ -101,7 +101,11 @@ func (h *Handler) handleStart(ctx context.Context, cmd BotCommand) {
 func (h *Handler) handleProfile(ctx context.Context, cmd BotCommand) {
 	user, err := h.userService.GetUser(cmd.UserID)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to get user profile")
+		h.logger.WithFields(logrus.Fields{
+			"user_id": cmd.UserID,
+			"error":   err.Error(),
+		}).Error("Failed to get user profile")
+
 		h.sendMessage(ctx, cmd.ChatID, "Sorry, I couldn't retrieve your profile information.")
 		return
 	}
@@ -131,11 +135,22 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 
 	query := strings.Join(cmd.Args, " ")
 
+	// Input validation
+	if len(query) > 100 {
+		h.sendMessage(ctx, cmd.ChatID, "Search query is too long. Please keep it under 100 characters.")
+		return
+	}
+
 	h.sendMessage(ctx, cmd.ChatID, "Searching for anime...")
 
 	searchResult, err := h.animeService.SearchAnime(query)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to search anime")
+		h.logger.WithFields(logrus.Fields{
+			"query":   query,
+			"user_id": cmd.UserID,
+			"error":   err.Error(),
+		}).Error("Failed to search anime")
+
 		h.sendMessage(ctx, cmd.ChatID, "Error occurred while searching. Please try again later.")
 		return
 	}
