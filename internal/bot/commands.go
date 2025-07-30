@@ -137,8 +137,8 @@ func (h *Handler) handleProfile(ctx context.Context, cmd BotCommand) {
 	profileMessage := "<b>📋 Your Profile:</b>\n\n"
 	profileMessage += "🆔 User ID: " + user.ID + "\n"
 
-	if user.Username != "" {
-		profileMessage += "👤 Username: @" + user.Username + "\n"
+	if user.Username != nil && *user.Username != "" {
+		profileMessage += "👤 Username: @" + *user.Username + "\n"
 	}
 
 	profileMessage += "📱 Platform: " + user.Platform + "\n"
@@ -402,6 +402,21 @@ Need more help? Just ask!`
 	h.sendMessage(ctx, cmd.ChatID, helpMessage)
 }
 
+// Helper function to safely get float64 value from pointer
+func getFloatValue(f *float64) float64 {
+	if f == nil {
+		return 0
+	}
+	return *f
+}
+
+func getStringValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, filterStatus models.Status) string {
 	var message strings.Builder
 
@@ -458,12 +473,14 @@ func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, filterS
 			message.WriteString(fmt.Sprintf("%s <b>%s</b>\n", statusEmoji, item.Media.Title))
 			message.WriteString(fmt.Sprintf("   🆔 ID: %s", item.Media.ExternalID))
 
-			if item.Media.Rating > 0 {
-				message.WriteString(fmt.Sprintf(" | ⭐ %.1f", item.Media.Rating))
+			// Handle nullable rating for Media
+			if item.Media.Rating != nil && *item.Media.Rating > 0 {
+				message.WriteString(fmt.Sprintf(" | ⭐ %.1f", *item.Media.Rating))
 			}
 
-			if item.Media.ReleaseDate != "" {
-				message.WriteString(fmt.Sprintf(" | 📅 %s", item.Media.ReleaseDate))
+			// Handle nullable release date
+			if item.Media.ReleaseDate != nil && *item.Media.ReleaseDate != "" {
+				message.WriteString(fmt.Sprintf(" | 📅 %s", *item.Media.ReleaseDate))
 			}
 
 			message.WriteString(fmt.Sprintf("\n   📝 Added: %s\n\n",

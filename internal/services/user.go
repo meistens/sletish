@@ -56,7 +56,12 @@ func (s *UserService) EnsureUserExists(userID, username string) error {
 		INSERT INTO users (id, username, platform, created_at, updated_at)
 		VALUES ($1, $2, 'telegram', $3, $3)
 		`
-		_, err := s.db.Exec(context.Background(), insertQuery, userID, username, now)
+		var usernamePtr *string
+		if username != "" {
+			usernamePtr = &username
+		}
+
+		_, err := s.db.Exec(context.Background(), insertQuery, userID, usernamePtr, now)
 		if err != nil {
 			return fmt.Errorf("failed to create user: %w", err)
 		}
@@ -72,7 +77,12 @@ func (s *UserService) EnsureUserExists(userID, username string) error {
 		WHERE id = $1 AND (username IS NULL OR username != $2)
 		`
 
-		_, err := s.db.Exec(context.Background(), updateQuery, userID, username)
+		var usernamePtr *string
+		if username != "" {
+			usernamePtr = &username
+		}
+
+		_, err := s.db.Exec(context.Background(), updateQuery, userID, usernamePtr)
 		if err != nil {
 			return fmt.Errorf("failed to update user: %w", err)
 		}
@@ -166,6 +176,7 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 	now := time.Now()
 
 	if err == pgx.ErrNoRows {
+		// Insert new record
 		insertQuery := `
 			INSERT INTO user_media (user_id, media_id, status, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $4)
@@ -177,6 +188,7 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 		}
 		s.logger.Info("Added anime to user list")
 	} else {
+		// Update existing record
 		updateQuery := `
 			UPDATE user_media
 			SET status = $3, updated_at = $4
@@ -352,22 +364,27 @@ func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, er
 func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models.Media, error) {
 	externalID := strconv.Itoa(jikanAnime.MalID)
 	title := jikanAnime.Title
-	description := jikanAnime.Synopsis
-	releaseDate := ""
-	posterURL := ""
-	rating := 0.0
+	var description *string
+	var releaseDate *string
+	var posterURL *string
+	var rating *float64
 
 	if jikanAnime.Score > 0 {
-		rating = jikanAnime.Score
+		rating = &jikanAnime.Score
 	}
-	if len(jikanAnime.Images.JPG.ImageURL) > 0 {
-		posterURL = jikanAnime.Images.JPG.ImageURL
+	if jikanAnime.Images.JPG.ImageURL != "" {
+		posterURL = &jikanAnime.Images.JPG.ImageURL
 	}
-	if len(description) > 1000 {
-		description = description[:1000] + "..."
+	if jikanAnime.Synopsis != "" {
+		desc := jikanAnime.Synopsis
+		if len(desc) > 1000 {
+			desc = desc[:1000] + "..."
+		}
+		description = &desc
 	}
 	if jikanAnime.Year > 0 {
-		releaseDate = strconv.Itoa(jikanAnime.Year)
+		yearStr := strconv.Itoa(jikanAnime.Year)
+		releaseDate = &yearStr
 	}
 
 	// Insert media record
