@@ -2,13 +2,13 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sletish/internal/models"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
@@ -159,16 +159,16 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 	`
 
 	err = s.db.QueryRow(context.Background(), checkQuery, userID, media.ID).Scan(&existingAnimeID)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && err != pgx.ErrNoRows {
 		return fmt.Errorf("failed to check existing user media: %w", err)
 	}
 
 	now := time.Now()
 
-	if err == sql.ErrNoRows {
+	if err == pgx.ErrNoRows {
 		insertQuery := `
-			INSERT INTO user_media (user_id, media_id, status, created_at)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO user_media (user_id, media_id, status, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $4)
 			`
 
 		_, err = s.db.Exec(context.Background(), insertQuery, userID, media.ID, status, now)
@@ -179,7 +179,7 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 	} else {
 		updateQuery := `
 			UPDATE user_media
-			SET status = $3,
+			SET status = $3, updated_at = $4
 			WHERE user_id = $1 AND media_id = $2
 			`
 
