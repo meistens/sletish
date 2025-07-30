@@ -66,6 +66,8 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 		h.handleSearch(ctx, command)
 	case "/profile":
 		h.handleProfile(ctx, command)
+	case "/add":
+		h.handleAdd(ctx, command)
 	case "/help":
 		h.handleHelp(ctx, command)
 	default:
@@ -155,6 +157,13 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 		return
 	}
 
+	// no results found for query
+	if len(searchResult.Data) == 0 {
+		h.sendMessage(ctx, cmd.ChatID, "No anime found matching your search")
+		return
+	}
+
+	// TODO: refine formatting
 	message := services.FormatAnimeMessage(searchResult.Data)
 	h.sendMessage(ctx, cmd.ChatID, message)
 }
