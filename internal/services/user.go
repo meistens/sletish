@@ -332,7 +332,6 @@ func (s *UserService) getOrCreateMediaByID(animeID int) (*models.Media, error) {
 	return s.createMediaFromJikan(*jikanAnime)
 }
 
-// /
 func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, error) {
 	query := `
 	SELECT id, external_id, title, type, description, release_date, poster_url, rating, created_at
@@ -366,6 +365,9 @@ func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models
 	}
 	if len(description) > 1000 {
 		description = description[:1000] + "..."
+	}
+	if jikanAnime.Year > 0 {
+		releaseDate = strconv.Itoa(jikanAnime.Year)
 	}
 
 	// Insert media record
