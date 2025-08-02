@@ -1,73 +1,62 @@
-# Anime Tracker Bot
+# Sletish
 
-A Telegram bot for searching anime information using the Jikan API (MyAnimeList unofficial API).
+A Telegram bot that helps you track and manage your anime watching list. Search for anime and keep track of what you're watching, what you've completed, and what you want to watch next.
 
-## Prerequisites
+## What it does
 
-- Go
-- PostgreSQL
-- Redis
-- Your Telegram Bot Token from @BotFather
+Sletish connects to your Telegram and lets you build your personal anime database. Search for any anime using data from MyAnimeList, add shows to your list, and organize them by status. No more forgetting what episode you were on or losing track of shows you wanted to watch.
 
-You can change the setup to your own taste (change db, cache handling, etc...)
+## Try it now
 
-## Local Setup
+Find the bot on Telegram: [https://t.me/zzMarsButlerBot](https://t.me/zzMarsButlerBot)
 
-### 1. Clone and Install Dependencies
+Send `/start` to begin using the bot.
 
-```bash
-git clone <repository_url>
-cd sletish
-go mod download
+## How to use
+
+**Search for anime**
 ```
-
-### 2. Environment Configuration
-
-Create a `.env` file, update it to match whatever your personal environment is
-
-### 3. Database Setup
-
-Start PostgreSQL and Redis using Docker/Podman/Your custom choice:
-
-```bash
-docker-compose up -d
+/search Naruto
 ```
+Get detailed information about any anime including ratings, episode count, and synopsis.
 
-Run database migrations:
-
-```bash
-# Install migrate tool (if not installed)
-go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-
-# Run migrations
-migrate -path migrations -database "postgres://app_user:your_app_password@localhost:5432/sletish?sslmode=disable" up
+**Add anime to your list**
 ```
-
-### 4. Run the Bot
-
-```bash
-go run cmd/bot/main.go
+/add 16498 watching
 ```
+Use the anime ID from search results and set your status.
 
-### 5. Set Webhook (for production)
-
-```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
-     -d "url=https://your_domain.com/webhook"
+**View your list**
 ```
+/list
+/list completed
+```
+See all your anime or filter by status.
 
-## Available Commands
+**Update status**
+```
+/update 16498 completed
+```
+Mark shows as completed, on hold, dropped, or move them to your watchlist.
 
-- `/start` - Welcome message and bot introduction
-- `/search <anime_name>` - Search for anime by name
-- `/profile` - View your user profile information
-- `/help` - Show available commands
+**Check your profile**
+```
+/profile
+```
+See your watching statistics and account information.
 
+## Status options
 
-## API
+- **watching** - Currently watching this anime
+- **completed** - Finished watching
+- **watchlist** - Planning to watch
+- **on_hold** - Paused for now
+- **dropped** - Stopped watching
 
-Uses Jikan API v4 (https://api.jikan.moe/v4) for anime data.
+## Current version
 
-## License
+This is the initial version focused on core functionality. Future updates will include more interactive features and enhanced navigation.
 
-MIT License
+## Questions or issues
+
+If you encounter any problems or have suggestions, feel free to open an issue in this repository.
