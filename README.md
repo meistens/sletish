@@ -17,6 +17,7 @@ Send `/start` to begin using the bot.
 **Search for anime**
 ```
 /search Naruto
+
 ```
 Get detailed information about any anime including ratings, episode count, and synopsis.
 
@@ -56,7 +57,3 @@ See your watching statistics and account information.
 ## Current version
 
 This is the initial version focused on core functionality. Future updates will include more interactive features and enhanced navigation.
-
-## Questions or issues
-
-If you encounter any problems or have suggestions, feel free to open an issue in this repository.
