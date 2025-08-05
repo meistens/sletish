@@ -280,3 +280,37 @@ func (s *UserService) invalidateUserCache(userID string) {
 		s.logger.WithError(err).Warn("Failed to invalidate user cache")
 	}
 }
+
+func (s *UserService) RemoveFromUserList(userID string, animeID int) error {
+	s.logger.WithFields(logrus.Fields{
+		"user_id":  userID,
+		"anime_id": animeID,
+	}).Info("Removing anime from user list")
+
+	media, err := s.getMediaByExternalID(strconv.Itoa(animeID))
+	if err != nil {
+		return fmt.Errorf("anime not found: %w", err)
+	}
+
+	// Delete user media record
+	deleteQuery := `
+	DELETE FROM user_media
+	WHERE user_id = $1
+	AND media_id = $2
+	`
+
+	result, err := s.db.Exec(context.Background(), deleteQuery, userID, media.ID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user media: %w", err)
+	}
+
+	// check if any rows were affected
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("anime not found in user's list")
+	}
+
+	s.invalidateUserCache(userID)
+
+	return nil
+}
