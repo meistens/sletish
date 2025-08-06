@@ -153,7 +153,7 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 	}
 
 	var message strings.Builder
-	message.WriteString("<b>Anime Search Results:</b>\n\n")
+	message.WriteString("<b>🔍 Anime Search Results:</b>\n\n")
 
 	// values above 13 will not work...
 	for i, anime := range animes {
@@ -161,46 +161,72 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 			break
 		}
 
+		// Anime title with number
 		message.WriteString(fmt.Sprintf("<b>%d. %s</b>\n", i+1, anime.Title))
 
+		// ID for adding to list
+		message.WriteString(fmt.Sprintf("🆔 ID: <code>%d</code>", anime.MalID))
+
+		// Score with star emoji
 		if anime.Score > 0 {
-			message.WriteString(fmt.Sprintf("Score: %.1f\n", anime.Score))
+			message.WriteString(fmt.Sprintf(" | ⭐ %.1f", anime.Score))
 		}
 
+		// Episodes count
 		if anime.Episodes > 0 {
-			message.WriteString(fmt.Sprintf("Episodes: %d\n", anime.Episodes))
+			message.WriteString(fmt.Sprintf(" | 📺 %d eps", anime.Episodes))
 		}
 
+		// Year
 		if anime.Year > 0 {
-			message.WriteString(fmt.Sprintf("Year: %d\n", anime.Year))
+			message.WriteString(fmt.Sprintf(" | 📅 %d", anime.Year))
 		}
 
+		message.WriteString("\n")
+
+		// Type and Status on second line
+		var details []string
 		if anime.Type != "" {
-			message.WriteString(fmt.Sprintf("Type: %s\n", anime.Type))
+			details = append(details, fmt.Sprintf("📱 %s", anime.Type))
 		}
-
 		if anime.Status != "" {
-			message.WriteString(fmt.Sprintf("Status: %s\n", anime.Status))
+			details = append(details, fmt.Sprintf("📊 %s", anime.Status))
+		}
+		if len(details) > 0 {
+			message.WriteString(strings.Join(details, " | ") + "\n")
 		}
 
+		// Genres
 		if len(anime.Genres) > 0 {
-			genres := make([]string, len(anime.Genres))
-			for j, genre := range anime.Genres {
-				genres[j] = genre.Name
+			genres := make([]string, 0, len(anime.Genres))
+			for _, genre := range anime.Genres {
+				genres = append(genres, genre.Name)
 			}
-			message.WriteString(fmt.Sprintf("Genres: %s\n", strings.Join(genres, ", ")))
+			genreText := strings.Join(genres, ", ")
+			if len(genreText) > 50 {
+				genreText = genreText[:50] + "..."
+			}
+			message.WriteString(fmt.Sprintf("🏷 %s\n", genreText))
 		}
 
+		// Synopsis (shortened)
 		if anime.Synopsis != "" {
 			synopsis := anime.Synopsis
-			if len(synopsis) > 200 {
-				synopsis = synopsis[:200] + "..."
+			if len(synopsis) > 150 {
+				synopsis = synopsis[:150] + "..."
 			}
-			message.WriteString(fmt.Sprintf("Synopsis: %s\n", synopsis))
+			message.WriteString(fmt.Sprintf("📝 %s\n", synopsis))
 		}
 
-		message.WriteString(fmt.Sprintf("<a href=\"https://myanimelist.net/anime/%d\">View on MyAnimeList</a>\n", anime.MalID))
-		message.WriteString("\n")
+		// Link to MyAnimeList
+		message.WriteString(fmt.Sprintf("🔗 <a href=\"https://myanimelist.net/anime/%d\">View on MyAnimeList</a>\n", anime.MalID))
+
+		// Separator for readability
+		if i < len(animes)-1 && i < 9 { // Don't add separator after last item
+			message.WriteString("\n━━━━━━━━━━━━━━━━━━━\n\n")
+		} else {
+			message.WriteString("\n")
+		}
 	}
 
 	return message.String()
