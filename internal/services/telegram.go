@@ -11,16 +11,18 @@ import (
 
 const telegramAPIURL = "https://api.telegram.org/bot"
 
-// SendTelegramMessage sends a plain text message to a Telegram chat by
-// calling SendTelegramMessageWithKeyboard.
-// It returns an error if sending the message fails.
+// SendTelegramMessage sends a plain text message to a Telegram chat.
+//
+// It wraps SendTelegramMessageWithKeyboard without any keyboard markup.
+// Returns an error if sending the message fails.
 func SendTelegramMessage(ctx context.Context, botToken string, chatId int, text string) error {
 	return SendTelegramMessageWithKeyboard(ctx, botToken, chatId, text, nil)
 }
 
 // SendTelegramMessageWithKeyboard sends a text message to a Telegram chat,
 // optionally including an inline keyboard for user interaction.
-// It returns an error if marshaling the request, sending the HTTP request,
+//
+// Returns an error if marshaling the request, sending the HTTP request,
 // or receiving a non-OK response from the Telegram API fails.
 func SendTelegramMessageWithKeyboard(ctx context.Context, botToken string, chatId int, text string, keyboard *models.InlineKeyboardMarkup) error {
 	response := models.TelegramResponse{
@@ -56,10 +58,128 @@ func SendTelegramMessageWithKeyboard(ctx context.Context, botToken string, chatI
 	return nil
 }
 
-// AnswerCallbackQuery sends a response to a Telegram callback query triggered by
-// an inline keyboard button. It can optionally display a notification or alert to the user(bool value set).
-// It returns an error if either marshaling the request, sending the HTTP request,
+// EditTelegramMessage edits an existing message in a Telegram chat.
+//
+// Optionally updates the inline keyboard as well. Returns an error if marshaling
+// the request, sending the HTTP request, or receiving a non-OK response from the
+// Telegram API fails.
+func EditTelegramMessage(ctx context.Context, botToken string, chatId int, messageId int, text string, keyboard *models.InlineKeyboardMarkup) error {
+	payload := map[string]interface{}{
+		"chat_id":    chatId,
+		"message_id": messageId,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal edit request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s%s/editMessageText", telegramAPIURL, botToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create edit request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send edit request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram edit message API error (status %d)", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// EditTelegramMessageKeyboard updates only the inline keyboard of a message.
+//
+// Returns an error if marshaling the request, sending the HTTP request,
 // or receiving a non-OK response from the Telegram API fails.
+func EditTelegramMessageKeyboard(ctx context.Context, botToken string, chatId int, messageId int, keyboard *models.InlineKeyboardMarkup) error {
+	payload := map[string]interface{}{
+		"chat_id":      chatId,
+		"message_id":   messageId,
+		"reply_markup": keyboard,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal keyboard edit request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s%s/editMessageReplyMarkup", telegramAPIURL, botToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create keyboard edit request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send keyboard edit request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram edit keyboard API error (status %d)", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// DeleteTelegramMessage deletes a message from a Telegram chat.
+//
+// Returns an error if marshaling the request, sending the HTTP request,
+// or receiving a non-OK response from the Telegram API fails.
+func DeleteTelegramMessage(ctx context.Context, botToken string, chatId int, messageId int) error {
+	payload := map[string]interface{}{
+		"chat_id":    chatId,
+		"message_id": messageId,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal delete request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s%s/deleteMessage", telegramAPIURL, botToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create delete request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send delete request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram delete message API error (status %d)", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// AnswerCallbackQuery sends a response to a callback query triggered
+// by a button in an inline keyboard.
+//
+// It can optionally show a popup notification (showAlert = true).
+// Returns an error if marshaling the request, sending it, or getting
+// a non-OK response from Telegram fails.
 func AnswerCallbackQuery(ctx context.Context, botToken string, callbackQueryId string, text string, showAlert bool) error {
 	response := models.AnswerCallbackQuery{
 		CallbackQueryId: callbackQueryId,
@@ -93,10 +213,10 @@ func AnswerCallbackQuery(ctx context.Context, botToken string, callbackQueryId s
 	return nil
 }
 
-// SetBotCommands configures the list of commands for the Telegram bot,
-// which appear in the bot's command menu to assist users in interacting with the bot.
-// It returns an error if either marshaling the commands, sending the HTTP request,
-// or receiving a non-OK response from the Telegram API fails.
+// SetBotCommands sets the list of available commands for the bot.
+//
+// These commands appear in Telegram's command menu. Returns an error if
+// marshaling or sending the request fails.
 func SetBotCommands(ctx context.Context, botToken string) error {
 	// NOTE: revisit after adding new commands
 	commands := []models.BotCommandMenu{
@@ -139,12 +259,54 @@ func SetBotCommands(ctx context.Context, botToken string) error {
 	return nil
 }
 
-// ParseTelegramRequest reads and decodes a Telegram update from the HTTP request body.
-// It returns the parsed Update object or an error if decoding fails.
+// ParseTelegramRequest parses an incoming Telegram webhook HTTP request
+// and returns the decoded Update object.
+//
+// Returns an error if decoding fails.
 func ParseTelegramRequest(r *http.Request) (*models.Update, error) {
 	var update models.Update
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 		return nil, err
 	}
 	return &update, nil
+}
+
+// GetMessageID extracts the message ID from a Telegram message object.
+//
+// Currently returns 0 as a placeholder. You must update your models.Message
+// struct to include the message_id field for this to work properly.
+func GetMessageID(message *models.Message) int {
+	return 0
+}
+
+// SendTypingAction sends a "typing..." action to a Telegram chat,
+// indicating the bot is working or processing.
+//
+// Returns an error if marshaling or sending the request fails.
+func SendTypingAction(ctx context.Context, botToken string, chatId int) error {
+	payload := map[string]interface{}{
+		"chat_id": chatId,
+		"action":  "typing",
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal typing action: %w", err)
+	}
+
+	url := fmt.Sprintf("%s%s/sendChatAction", telegramAPIURL, botToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create typing action request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send typing action: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sletish/internal/models"
@@ -231,15 +232,17 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 	return message.String()
 }
 
+// Replace the makeRequest method in internal/services/anime.go around line 120
 func (c *Client) makeRequest(url string) ([]byte, error) {
 	var rErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		c.enforceRateLimit()
-		<-c.rateLimiter
+		<-c.rateLimiter // Take token
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 		if err != nil {
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to create request: %w", err)
 			continue
 		}
@@ -249,27 +252,27 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to make HTTP request: %w", err)
 			c.retryLogger(attempt, url, err)
-			c.rateLimiter <- struct{}{}
 			c.waitForRetry(attempt)
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("API returned status code %d", resp.StatusCode)
-			c.retryLogger(attempt, url, err)
-			c.rateLimiter <- struct{}{}
+			c.retryLogger(attempt, url, rErr)
 			c.waitForRetry(attempt)
 			continue
 		}
 
 		body, err := c.readRespBody(resp)
 		resp.Body.Close()
-		c.rateLimiter <- struct{}{}
 
 		if err != nil {
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to read response body: %w", err)
 			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
@@ -284,10 +287,11 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 		}).Debug("API request successful")
 
 		c.lastRequest = time.Now()
+		c.rateLimiter <- struct{}{} // Return token on success
 		return body, nil
 	}
 
-	return nil, fmt.Errorf("failed %d, attempts: %w", maxRetries, rErr)
+	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, rErr)
 }
 
 func (c *Client) enforceRateLimit() {
@@ -316,7 +320,6 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 	}
 
 	// read with size limit
-
 	var initialCap int64 = 1024 // Default initial capacity
 	if resp.ContentLength > 0 && resp.ContentLength <= maxResponseSize {
 		initialCap = resp.ContentLength
@@ -331,12 +334,12 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 		if n > 0 {
 			totalRead += n
 			if totalRead > maxResponseSize {
-				return nil, fmt.Errorf("response too large: exceeded % bytes", maxResponseSize)
+				return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
 			}
 			body = append(body, buf[:n]...)
 		}
 		if err != nil {
-			if err.Error() == "EOF" {
+			if err == io.EOF { // Proper EOF handling
 				break
 			}
 			return nil, err
@@ -345,7 +348,6 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 
 	return body, nil
 }
-
 func (c *Client) waitForRetry(attempt int) {
 	if attempt < maxRetries-1 {
 		delay := time.Duration(attempt+1) * retryDelay

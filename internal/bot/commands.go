@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sletish/internal/models"
 	"sletish/internal/services"
@@ -36,6 +37,13 @@ func NewHandler(animeService *services.Client, userService *services.UserService
 }
 
 func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
+	// Handle callback queries (button clicks)
+	if update.CallbackQuery != nil {
+		h.handleCallbackQuery(ctx, update.CallbackQuery)
+		return
+	}
+
+	// Handle regular messages
 	if update.Message.Text == "" {
 		return
 	}
@@ -80,6 +88,161 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 	default:
 		h.sendMessage(ctx, command.ChatID, "Unknown command. Use /help to see available commands")
 	}
+}
+
+func (h *Handler) handleCallbackQuery(ctx context.Context, callback *models.CallbackQuery) {
+	h.logger.WithFields(logrus.Fields{
+		"callback_id": callback.Id,
+		"user_id":     callback.From.Id,
+		"data":        callback.Data,
+	}).Info("Processing callback query")
+
+	var callbackData models.CallbackData
+	if err := json.Unmarshal([]byte(callback.Data), &callbackData); err != nil {
+		h.logger.WithError(err).Error("Failed to parse callback data")
+		h.answerCallback(ctx, callback.Id, "❌ Error processing request", false)
+		return
+	}
+
+	userID := strconv.Itoa(callback.From.Id)
+	chatID := strconv.Itoa(callback.Message.Chat.Id)
+
+	switch callbackData.Action {
+	case "add_anime":
+		h.handleCallbackAddAnime(ctx, callback, &callbackData, userID, chatID)
+	case "update_status":
+		h.handleCallbackUpdateStatus(ctx, callback, &callbackData, userID, chatID)
+	case "remove_anime":
+		h.handleCallbackRemoveAnime(ctx, callback, &callbackData, userID, chatID)
+	case "view_details":
+		h.handleCallbackViewDetails(ctx, callback, &callbackData, userID, chatID)
+	case "list_page":
+		h.handleCallbackListPage(ctx, callback, &callbackData, userID, chatID)
+	default:
+		h.answerCallback(ctx, callback.Id, "❌ Unknown action", false)
+	}
+}
+
+func (h *Handler) handleCallbackAddAnime(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
+	if data.AnimeID == "" || data.Status == "" {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid data", false)
+		return
+	}
+
+	animeID, err := strconv.Atoi(data.AnimeID)
+	if err != nil {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid anime ID", false)
+		return
+	}
+
+	status := models.Status(data.Status)
+	if !isValidStatus(status) {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid status", false)
+		return
+	}
+
+	if err := h.userService.AddToUserList(userID, animeID, status); err != nil {
+		h.logger.WithError(err).Error("Failed to add anime via callback")
+		if strings.Contains(err.Error(), "not found") {
+			h.answerCallback(ctx, callback.Id, "❌ Anime not found", true)
+		} else {
+			h.answerCallback(ctx, callback.Id, "❌ Failed to add anime", true)
+		}
+		return
+	}
+
+	h.answerCallback(ctx, callback.Id, fmt.Sprintf("✅ Added to %s list!", status), false)
+
+	// Update the message to show it was added
+	newText := fmt.Sprintf("✅ <b>Anime added to your %s list!</b>\n\nUse /list to view your anime list.", status)
+	h.editMessage(ctx, chatID, callback.Message.MessageId, newText, nil)
+}
+
+func (h *Handler) handleCallbackUpdateStatus(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
+	if data.AnimeID == "" || data.Status == "" {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid data", false)
+		return
+	}
+
+	animeID, err := strconv.Atoi(data.AnimeID)
+	if err != nil {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid anime ID", false)
+		return
+	}
+
+	status := models.Status(data.Status)
+	if !isValidStatus(status) {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid status", false)
+		return
+	}
+
+	if err := h.userService.UpdateAnimeStatus(userID, animeID, status); err != nil {
+		h.logger.WithError(err).Error("Failed to update anime status via callback")
+		if strings.Contains(err.Error(), "not found") {
+			h.answerCallback(ctx, callback.Id, "❌ Anime not found in your list", true)
+		} else {
+			h.answerCallback(ctx, callback.Id, "❌ Failed to update status", true)
+		}
+		return
+	}
+
+	h.answerCallback(ctx, callback.Id, fmt.Sprintf("✅ Status updated to %s!", status), false)
+}
+
+func (h *Handler) handleCallbackRemoveAnime(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
+	if data.AnimeID == "" {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid anime ID", false)
+		return
+	}
+
+	animeID, err := strconv.Atoi(data.AnimeID)
+	if err != nil {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid anime ID", false)
+		return
+	}
+
+	if err := h.userService.RemoveFromUserList(userID, animeID); err != nil {
+		h.logger.WithError(err).Error("Failed to remove anime via callback")
+		if strings.Contains(err.Error(), "not found") {
+			h.answerCallback(ctx, callback.Id, "❌ Anime not found in your list", true)
+		} else {
+			h.answerCallback(ctx, callback.Id, "❌ Failed to remove anime", true)
+		}
+		return
+	}
+
+	h.answerCallback(ctx, callback.Id, "✅ Anime removed from your list!", false)
+}
+
+func (h *Handler) handleCallbackViewDetails(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
+	if data.AnimeID == "" {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid anime ID", false)
+		return
+	}
+
+	animeID, err := strconv.Atoi(data.AnimeID)
+	if err != nil {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid anime ID", false)
+		return
+	}
+
+	anime, err := h.animeService.GetAnimeByID(animeID)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to get anime details via callback")
+		h.answerCallback(ctx, callback.Id, "❌ Failed to get anime details", true)
+		return
+	}
+
+	detailsMessage := h.formatAnimeDetails(*anime)
+	keyboard := h.createAnimeDetailsKeyboard(data.AnimeID)
+
+	h.editMessage(ctx, chatID, callback.Message.MessageId, detailsMessage, keyboard)
+	h.answerCallback(ctx, callback.Id, "", false)
+}
+
+func (h *Handler) handleCallbackListPage(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
+	// This would handle pagination for user lists
+	h.answerCallback(ctx, callback.Id, "Pagination coming soon!", false)
 }
 
 func (h *Handler) parseCommand(text, userID, chatID string) BotCommand {
@@ -213,10 +376,11 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 		return
 	}
 
-	// TODO: refine formatting
-	message := services.FormatAnimeMessage(searchResult.Data)
-	message += "\n💡 <i>To add an anime to your list, use: /add &lt;anime_id&gt; &lt;status&gt;</i>"
-	h.sendMessage(ctx, cmd.ChatID, message)
+	// Format message with interactive keyboards
+	message := h.formatSearchResults(searchResult.Data)
+	keyboard := h.createSearchResultsKeyboard(searchResult.Data)
+
+	h.sendMessageWithKeyboard(ctx, cmd.ChatID, message, keyboard)
 }
 
 func (h *Handler) handleAdd(ctx context.Context, cmd BotCommand) {
@@ -311,7 +475,7 @@ func (h *Handler) handleList(ctx context.Context, cmd BotCommand) {
 
 	h.sendMessage(ctx, cmd.ChatID, "📋 Getting your anime list...")
 
-	userList, err := h.userService.GetUserList(cmd.UserID, status)
+	userList, err := h.userService.GetUserList(cmd.UserID, string(status))
 	if err != nil {
 		h.logger.WithError(err).Error("Failed to get user list")
 		h.sendMessage(ctx, cmd.ChatID, "❌ Sorry, I couldn't retrieve your anime list. Please try again later.")
@@ -328,7 +492,8 @@ func (h *Handler) handleList(ctx context.Context, cmd BotCommand) {
 	}
 
 	message := h.formatUserList(userList, status)
-	h.sendMessage(ctx, cmd.ChatID, message)
+	keyboard := h.createUserListKeyboard(userList, status)
+	h.sendMessageWithKeyboard(ctx, cmd.ChatID, message, keyboard)
 }
 
 func (h *Handler) handleUpdate(ctx context.Context, cmd BotCommand) {
@@ -402,6 +567,291 @@ Need more help? Just ask!`
 	h.sendMessage(ctx, cmd.ChatID, helpMessage)
 }
 
+// Keyboard creation methods
+func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models.InlineKeyboardMarkup {
+	var rows [][]models.InlineKeyboardButton
+
+	// Add quick action buttons for first result
+	if len(animes) > 0 {
+		firstAnime := animes[0]
+		animeID := strconv.Itoa(firstAnime.MalID)
+
+		// Status selection row
+		statusRow := []models.InlineKeyboardButton{
+			{
+				Text:         "📝 Watchlist",
+				CallbackData: h.createCallbackData("add_anime", animeID, "watchlist"),
+			},
+			{
+				Text:         "👀 Watching",
+				CallbackData: h.createCallbackData("add_anime", animeID, "watching"),
+			},
+		}
+		rows = append(rows, statusRow)
+
+		// More status options
+		statusRow2 := []models.InlineKeyboardButton{
+			{
+				Text:         "✅ Completed",
+				CallbackData: h.createCallbackData("add_anime", animeID, "completed"),
+			},
+			{
+				Text:         "⏸ On Hold",
+				CallbackData: h.createCallbackData("add_anime", animeID, "on_hold"),
+			},
+		}
+		rows = append(rows, statusRow2)
+
+		// Details and external link row
+		detailsRow := []models.InlineKeyboardButton{
+			{
+				Text:         "📖 Details",
+				CallbackData: h.createCallbackData("view_details", animeID, ""),
+			},
+			{
+				Text: "🔗 MyAnimeList",
+				URL:  fmt.Sprintf("https://myanimelist.net/anime/%d", firstAnime.MalID),
+			},
+		}
+		rows = append(rows, detailsRow)
+	}
+
+	return &models.InlineKeyboardMarkup{
+		InlineKeyboard: rows,
+	}
+}
+
+func (h *Handler) createUserListKeyboard(userList []models.UserMediaWithDetails, filterStatus models.Status) *models.InlineKeyboardMarkup {
+	var rows [][]models.InlineKeyboardButton
+
+	// If showing a single status, add management buttons for first few items
+	if filterStatus != "" && len(userList) > 0 {
+		for i, item := range userList {
+			if i >= 3 { // Limit to first 3 items to avoid too many buttons
+				break
+			}
+
+			animeID := item.Media.ExternalID
+			title := item.Media.Title
+			if len(title) > 20 {
+				title = title[:20] + "..."
+			}
+
+			// Status update buttons
+			statusRow := []models.InlineKeyboardButton{
+				{
+					Text:         fmt.Sprintf("📝 %s", title),
+					CallbackData: h.createCallbackData("view_details", animeID, ""),
+				},
+			}
+
+			// Add status change button based on current status
+			switch item.UserMedia.Status {
+			case models.StatusWatching:
+				statusRow = append(statusRow, models.InlineKeyboardButton{
+					Text:         "✅ Complete",
+					CallbackData: h.createCallbackData("update_status", animeID, "completed"),
+				})
+			case models.StatusWatchlist:
+				statusRow = append(statusRow, models.InlineKeyboardButton{
+					Text:         "👀 Start Watching",
+					CallbackData: h.createCallbackData("update_status", animeID, "watching"),
+				})
+			case models.StatusCompleted:
+				statusRow = append(statusRow, models.InlineKeyboardButton{
+					Text:         "🗑 Remove",
+					CallbackData: h.createCallbackData("remove_anime", animeID, ""),
+				})
+			}
+
+			rows = append(rows, statusRow)
+		}
+	}
+
+	// Filter buttons row
+	if filterStatus == "" {
+		filterRow := []models.InlineKeyboardButton{
+			{
+				Text:         "👀 Watching",
+				CallbackData: h.createCallbackData("list_page", "", "watching"),
+			},
+			{
+				Text:         "✅ Completed",
+				CallbackData: h.createCallbackData("list_page", "", "completed"),
+			},
+		}
+		rows = append(rows, filterRow)
+
+		filterRow2 := []models.InlineKeyboardButton{
+			{
+				Text:         "📝 Watchlist",
+				CallbackData: h.createCallbackData("list_page", "", "watchlist"),
+			},
+			{
+				Text:         "⏸ On Hold",
+				CallbackData: h.createCallbackData("list_page", "", "on_hold"),
+			},
+		}
+		rows = append(rows, filterRow2)
+	}
+
+	return &models.InlineKeyboardMarkup{
+		InlineKeyboard: rows,
+	}
+}
+
+func (h *Handler) createAnimeDetailsKeyboard(animeID string) *models.InlineKeyboardMarkup {
+	rows := [][]models.InlineKeyboardButton{
+		{
+			{
+				Text:         "📝 Add to Watchlist",
+				CallbackData: h.createCallbackData("add_anime", animeID, "watchlist"),
+			},
+			{
+				Text:         "👀 Start Watching",
+				CallbackData: h.createCallbackData("add_anime", animeID, "watching"),
+			},
+		},
+		{
+			{
+				Text:         "✅ Mark Completed",
+				CallbackData: h.createCallbackData("add_anime", animeID, "completed"),
+			},
+		},
+	}
+
+	return &models.InlineKeyboardMarkup{
+		InlineKeyboard: rows,
+	}
+}
+
+func (h *Handler) createCallbackData(action, animeID, status string) string {
+	data := models.CallbackData{
+		Action:  action,
+		AnimeID: animeID,
+		Status:  status,
+	}
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to marshal callback data")
+		return "{}"
+	}
+
+	return string(jsonData)
+}
+
+// Enhanced formatting methods
+func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
+	if len(animes) == 0 {
+		return "No anime found for your search query."
+	}
+
+	var message strings.Builder
+	message.WriteString("<b>🔍 Search Results</b>\n\n")
+
+	// Show detailed info for first result
+	anime := animes[0]
+	message.WriteString(fmt.Sprintf("<b>%s</b>\n", anime.Title))
+	message.WriteString(fmt.Sprintf("🆔 ID: <code>%d</code>", anime.MalID))
+
+	if anime.Score > 0 {
+		message.WriteString(fmt.Sprintf(" | ⭐ %.1f", anime.Score))
+	}
+	if anime.Episodes > 0 {
+		message.WriteString(fmt.Sprintf(" | 📺 %d eps", anime.Episodes))
+	}
+	if anime.Year > 0 {
+		message.WriteString(fmt.Sprintf(" | 📅 %d", anime.Year))
+	}
+	message.WriteString("\n")
+
+	// Type and Status
+	var details []string
+	if anime.Type != "" {
+		details = append(details, fmt.Sprintf("📱 %s", anime.Type))
+	}
+	if anime.Status != "" {
+		details = append(details, fmt.Sprintf("📊 %s", anime.Status))
+	}
+	if len(details) > 0 {
+		message.WriteString(strings.Join(details, " | ") + "\n")
+	}
+
+	// Synopsis (shortened)
+	if anime.Synopsis != "" {
+		synopsis := anime.Synopsis
+		if len(synopsis) > 200 {
+			synopsis = synopsis[:200] + "..."
+		}
+		message.WriteString(fmt.Sprintf("📝 %s\n", synopsis))
+	}
+
+	// Show other results briefly
+	if len(animes) > 1 {
+		message.WriteString(fmt.Sprintf("\n<b>Other Results (%d more):</b>\n", len(animes)-1))
+		for i, otherAnime := range animes[1:] {
+			if i >= 4 { // Show max 5 more
+				message.WriteString(fmt.Sprintf("... and %d more results\n", len(animes)-6))
+				break
+			}
+			message.WriteString(fmt.Sprintf("• %s (ID: %d)", otherAnime.Title, otherAnime.MalID))
+			if otherAnime.Score > 0 {
+				message.WriteString(fmt.Sprintf(" - ⭐ %.1f", otherAnime.Score))
+			}
+			message.WriteString("\n")
+		}
+	}
+
+	message.WriteString("\n💡 <i>Use the buttons below to quickly add the top result to your list!</i>")
+	return message.String()
+}
+
+func (h *Handler) formatAnimeDetails(anime models.AnimeData) string {
+	var message strings.Builder
+	message.WriteString(fmt.Sprintf("<b>📺 %s</b>\n\n", anime.Title))
+
+	message.WriteString(fmt.Sprintf("🆔 ID: <code>%d</code>\n", anime.MalID))
+
+	if anime.Score > 0 {
+		message.WriteString(fmt.Sprintf("⭐ Rating: %.1f/10\n", anime.Score))
+	}
+
+	if anime.Episodes > 0 {
+		message.WriteString(fmt.Sprintf("📺 Episodes: %d\n", anime.Episodes))
+	}
+
+	if anime.Year > 0 {
+		message.WriteString(fmt.Sprintf("📅 Year: %d\n", anime.Year))
+	}
+
+	if anime.Type != "" {
+		message.WriteString(fmt.Sprintf("📱 Type: %s\n", anime.Type))
+	}
+
+	if anime.Status != "" {
+		message.WriteString(fmt.Sprintf("📊 Status: %s\n", anime.Status))
+	}
+
+	// Genres
+	if len(anime.Genres) > 0 {
+		genres := make([]string, 0, len(anime.Genres))
+		for _, genre := range anime.Genres {
+			genres = append(genres, genre.Name)
+		}
+		message.WriteString(fmt.Sprintf("🏷 Genres: %s\n", strings.Join(genres, ", ")))
+	}
+
+	// Synopsis
+	if anime.Synopsis != "" {
+		message.WriteString(fmt.Sprintf("\n📝 <b>Synopsis:</b>\n%s\n", anime.Synopsis))
+	}
+
+	message.WriteString(fmt.Sprintf("\n🔗 <a href=\"https://myanimelist.net/anime/%d\">View on MyAnimeList</a>", anime.MalID))
+
+	return message.String()
+}
+
 // Helper function to safely get float64 value from pointer
 func getFloatValue(f *float64) float64 {
 	if f == nil {
@@ -465,8 +915,8 @@ func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, filterS
 		// Show detailed list for specific status
 		statusEmoji := getStatusEmoji(filterStatus)
 		for i, item := range userList {
-			if i >= 20 { // Limit to 20 items
-				message.WriteString(fmt.Sprintf("\n... and %d more items\n", len(userList)-20))
+			if i >= 10 { // Limit to 10 items for specific status
+				message.WriteString(fmt.Sprintf("\n... and %d more items\n", len(userList)-10))
 				break
 			}
 
@@ -488,7 +938,12 @@ func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, filterS
 		}
 	}
 
-	message.WriteString("<i>Use /update &lt;id&gt; &lt;status&gt; to change status or /remove &lt;id&gt; to remove</i>")
+	if filterStatus != "" {
+		message.WriteString("<i>💡 Use the buttons below for quick actions on your anime!</i>")
+	} else {
+		message.WriteString("<i>💡 Use the filter buttons below to view specific categories!</i>")
+	}
+
 	return message.String()
 }
 
@@ -509,14 +964,19 @@ func getStatusEmoji(status models.Status) string {
 	}
 }
 
+// Message sending methods
 func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
+	h.sendMessageWithKeyboard(ctx, chatID, text, nil)
+}
+
+func (h *Handler) sendMessageWithKeyboard(ctx context.Context, chatID, text string, keyboard *models.InlineKeyboardMarkup) {
 	chatIDInt, err := strconv.Atoi(chatID)
 	if err != nil {
 		h.logger.WithError(err).Error("Invalid chat ID")
 		return
 	}
 
-	if err := services.SendTelegramMessage(ctx, h.botToken, chatIDInt, text); err != nil {
+	if err := services.SendTelegramMessageWithKeyboard(ctx, h.botToken, chatIDInt, text, keyboard); err != nil {
 		h.logger.WithFields(logrus.Fields{
 			"chat_id": chatIDInt,
 			"error":   err.Error(),
@@ -525,6 +985,39 @@ func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
 		h.logger.WithFields(logrus.Fields{
 			"chat_id": chatIDInt,
 		}).Debug("Message sent successfully")
+	}
+}
+
+func (h *Handler) editMessage(ctx context.Context, chatID string, messageID int, text string, keyboard *models.InlineKeyboardMarkup) {
+	chatIDInt, err := strconv.Atoi(chatID)
+	if err != nil {
+		h.logger.WithError(err).Error("Invalid chat ID for edit message")
+		return
+	}
+
+	if err := services.EditTelegramMessage(ctx, h.botToken, chatIDInt, messageID, text, keyboard); err != nil {
+		h.logger.WithFields(logrus.Fields{
+			"chat_id":    chatIDInt,
+			"message_id": messageID,
+			"error":      err.Error(),
+		}).Error("Failed to edit message")
+
+		// Fallback: send new message if edit fails
+		h.sendMessageWithKeyboard(ctx, chatID, text, keyboard)
+	} else {
+		h.logger.WithFields(logrus.Fields{
+			"chat_id":    chatIDInt,
+			"message_id": messageID,
+		}).Debug("Message edited successfully")
+	}
+}
+
+func (h *Handler) answerCallback(ctx context.Context, callbackID, text string, showAlert bool) {
+	if err := services.AnswerCallbackQuery(ctx, h.botToken, callbackID, text, showAlert); err != nil {
+		h.logger.WithFields(logrus.Fields{
+			"callback_id": callbackID,
+			"error":       err.Error(),
+		}).Error("Failed to answer callback query")
 	}
 }
 

@@ -10,9 +10,10 @@ type Update struct {
 
 // Message represents a standard text message sent in a chat.
 type Message struct {
-	Text string `json:"text"`
-	Chat Chat   `json:"chat"`
-	From User   `json:"from"`
+	MessageId int    `json:"message_id"`
+	Text      string `json:"text"`
+	Chat      Chat   `json:"chat"`
+	From      User   `json:"from"`
 }
 
 // Chat represents a Telegram chat, which may be a private chat, group, etc.
@@ -57,7 +58,7 @@ type TelegramResponse struct {
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
-// BotCommandMenu defines a command and description for Telegram’s bot command menu.
+// BotCommandMenu defines a command and description for Telegram's bot command menu.
 type BotCommandMenu struct {
 	Command     string `json:"command"`
 	Description string `json:"description"`
