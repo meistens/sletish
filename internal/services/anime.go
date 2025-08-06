@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sletish/internal/models"
@@ -293,7 +294,6 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 	}
 
 	// read with size limit
-
 	var initialCap int64 = 1024 // Default initial capacity
 	if resp.ContentLength > 0 && resp.ContentLength <= maxResponseSize {
 		initialCap = resp.ContentLength
@@ -308,12 +308,12 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 		if n > 0 {
 			totalRead += n
 			if totalRead > maxResponseSize {
-				return nil, fmt.Errorf("response too large: exceeded % bytes", maxResponseSize)
+				return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
 			}
 			body = append(body, buf[:n]...)
 		}
 		if err != nil {
-			if err.Error() == "EOF" {
+			if err == io.EOF { // Proper EOF handling
 				break
 			}
 			return nil, err
@@ -322,7 +322,6 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 
 	return body, nil
 }
-
 func (c *Client) waitForRetry(attempt int) {
 	if attempt < maxRetries-1 {
 		delay := time.Duration(attempt+1) * retryDelay
