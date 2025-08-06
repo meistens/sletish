@@ -2,13 +2,15 @@ package services
 
 import (
 	"context"
-	"database/sql"
+	// "database/sql"
 	"encoding/json"
 	"fmt"
 	"sletish/internal/models"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
@@ -164,11 +166,11 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 	AND media_id = $2
 	`
 
+	isNewEntry := false
 	err = s.db.QueryRow(context.Background(), checkQuery, userID, media.ID).Scan(&existingAnimeID)
 
-	isNewEntry := false
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			isNewEntry = true
 		} else {
 			return fmt.Errorf("failed to check existing user media: %w", err)
@@ -234,8 +236,8 @@ func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, er
 	`
 
 	var media models.Media
-	var releaseDate sql.NullString
-	var rating sql.NullFloat64
+	var releaseDate pgtype.Text
+	var rating pgtype.Float8
 
 	err := s.db.QueryRow(context.Background(), query, externalID).Scan(
 		&media.ID,
@@ -291,8 +293,8 @@ func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models
 	`
 
 	var media models.Media
-	var dbReleaseDate sql.NullString
-	var dbRating sql.NullFloat64
+	var dbReleaseDate pgtype.Text
+	var dbRating pgtype.Float8
 	now := time.Now()
 
 	err := s.db.QueryRow(context.Background(), insertQuery,
@@ -448,10 +450,11 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 
 	for rows.Next() {
 		var item models.UserMediaWithDetails
-		// handle NULL
-		var umRating sql.NullFloat64
-		var mRating sql.NullFloat64
-		var releaseDate sql.NullString
+		// Use pgx nullable types for consistency
+		var umRating pgtype.Float8
+		var mRating pgtype.Float8
+		var releaseDate pgtype.Text
+		var notes pgtype.Text
 
 		err := rows.Scan(
 			// UserMedia fields
@@ -460,7 +463,7 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 			&item.UserMedia.MediaID,
 			&item.UserMedia.Status,
 			&umRating,
-			&item.UserMedia.Notes,
+			&notes,
 			&item.UserMedia.CreatedAt,
 			&item.UserMedia.UpdatedAt,
 
@@ -479,9 +482,12 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		// Convert NULL values to proper types
+		// Assign values from pgx nullable types
 		if umRating.Valid {
 			item.UserMedia.Rating = umRating.Float64
+		}
+		if notes.Valid {
+			item.UserMedia.Notes = notes.String
 		}
 
 		if mRating.Valid {
