@@ -205,15 +205,17 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 	return message.String()
 }
 
+// Replace the makeRequest method in internal/services/anime.go around line 120
 func (c *Client) makeRequest(url string) ([]byte, error) {
 	var rErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		c.enforceRateLimit()
-		<-c.rateLimiter
+		<-c.rateLimiter // Take token
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 		if err != nil {
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to create request: %w", err)
 			continue
 		}
@@ -223,27 +225,27 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to make HTTP request: %w", err)
 			c.retryLogger(attempt, url, err)
-			c.rateLimiter <- struct{}{}
 			c.waitForRetry(attempt)
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("API returned status code %d", resp.StatusCode)
-			c.retryLogger(attempt, url, err)
-			c.rateLimiter <- struct{}{}
+			c.retryLogger(attempt, url, rErr)
 			c.waitForRetry(attempt)
 			continue
 		}
 
 		body, err := c.readRespBody(resp)
 		resp.Body.Close()
-		c.rateLimiter <- struct{}{}
 
 		if err != nil {
+			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to read response body: %w", err)
 			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
@@ -258,10 +260,11 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 		}).Debug("API request successful")
 
 		c.lastRequest = time.Now()
+		c.rateLimiter <- struct{}{} // Return token on success
 		return body, nil
 	}
 
-	return nil, fmt.Errorf("failed %d, attempts: %w", maxRetries, rErr)
+	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, rErr)
 }
 
 func (c *Client) enforceRateLimit() {
