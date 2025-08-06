@@ -37,6 +37,13 @@ func NewHandler(animeService *services.Client, userService *services.UserService
 }
 
 func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
+	// Handle callback queries (button clicks)
+	if update.CallbackQuery != nil {
+		h.handleCallbackQuery(ctx, update.CallbackQuery)
+		return
+	}
+
+	// Handle regular messages
 	if update.Message.Text == "" {
 		return
 	}
