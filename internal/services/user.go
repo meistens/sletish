@@ -173,8 +173,8 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 
 	if err == sql.ErrNoRows {
 		insertQuery := `
-			INSERT INTO user_media (user_id, media_id, status, created_at)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO user_media (user_id, media_id, status, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $4)
 			`
 
 		_, err = s.db.Exec(context.Background(), insertQuery, userID, media.ID, status, now)
@@ -185,7 +185,7 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 	} else {
 		updateQuery := `
 			UPDATE user_media
-			SET status = $3,
+			SET status = $3, updated_at = $4
 			WHERE user_id = $1 AND media_id = $2
 			`
 
@@ -397,6 +397,10 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 
 	for rows.Next() {
 		var item models.UserMediaWithDetails
+		// handle NULL
+		var umRating sql.NullFloat64
+		var mRating sql.NullFloat64
+		var releaseDate sql.NullString
 
 		err := rows.Scan(
 			// UserMedia fields
@@ -404,7 +408,7 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 			&item.UserMedia.UserID,
 			&item.UserMedia.MediaID,
 			&item.UserMedia.Status,
-			&item.UserMedia.Rating,
+			&umRating,
 			&item.UserMedia.Notes,
 			&item.UserMedia.CreatedAt,
 			&item.UserMedia.UpdatedAt,
@@ -415,13 +419,26 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 			&item.Media.Title,
 			&item.Media.Type,
 			&item.Media.Description,
-			&item.Media.ReleaseDate,
+			&releaseDate,
 			&item.Media.PosterURL,
-			&item.Media.Rating,
+			&mRating,
 			&item.Media.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		// Convert NULL values to proper types
+		if umRating.Valid {
+			item.UserMedia.Rating = umRating.Float64
+		}
+
+		if mRating.Valid {
+			item.Media.Rating = &mRating.Float64
+		}
+
+		if releaseDate.Valid {
+			item.Media.ReleaseDate = &releaseDate.String
 		}
 
 		list = append(list, item)
