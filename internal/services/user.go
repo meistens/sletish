@@ -314,3 +314,30 @@ func (s *UserService) RemoveFromUserList(userID string, animeID int) error {
 
 	return nil
 }
+
+func (s *UserService) UpdateAnimeStatus(userID string, animeID int, status models.Status) error {
+	// fetch media record by external id
+	media, err := s.getMediaByExternalID(strconv.Itoa(animeID))
+	if err != nil {
+		return fmt.Errorf("anime not found: %w", err)
+	}
+
+	query := `
+			UPDATE user_media
+			SET status = $1, updated_at = NOW()
+			WHERE user_id = $2 AND media_id = $3
+		`
+
+	result, err := s.db.Exec(context.Background(), query, status, userID, media.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update status: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("anime not found in user's list")
+	}
+
+	s.invalidateUserCache(userID)
+
+	return nil
+}
