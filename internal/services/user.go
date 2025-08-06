@@ -28,6 +28,8 @@ type UserService struct {
 	client *Client
 }
 
+// NewUserService creates and returns a new UserService.
+// It requires a PostgreSQL connection pool, a Redis client, a logger, and an HTTP client.
 func NewUserService(db *pgxpool.Pool, redis *redis.Client, logger *logrus.Logger, client *Client) *UserService {
 	return &UserService{
 		db:     db,
@@ -37,6 +39,9 @@ func NewUserService(db *pgxpool.Pool, redis *redis.Client, logger *logrus.Logger
 	}
 }
 
+// EnsureUserExists checks whether a user exists in the database.
+// If the user doesn't exist, it creates a new one. If the username has changed, it updates it.
+// Also invalidates the user's cache.
 func (s *UserService) EnsureUserExists(userID, username string) error {
 	s.logger.WithFields(logrus.Fields{
 		"user_id":  userID,
@@ -82,6 +87,9 @@ func (s *UserService) EnsureUserExists(userID, username string) error {
 	return nil
 }
 
+// GetUser retrieves a user profile by ID.
+// If available, it attempts to fetch the user data from Redis cache.
+// Falls back to the database if not cached, and caches the result.
 func (s *UserService) GetUser(userID string) (*models.AppUser, error) {
 	if s.redis != nil {
 		cacheKey := userCachePrefix + userID
@@ -131,6 +139,10 @@ func (s *UserService) GetUser(userID string) (*models.AppUser, error) {
 	return &user, nil
 }
 
+// AddToUserList adds an anime (media) to a user's list with a specific status.
+// If the anime is already in the user's list, it updates the status instead.
+// Automatically fetches or creates the media entry from the Jikan API if not present in the DB.
+// Invalidates user cache after the operation.
 func (s *UserService) AddToUserList(userID string, animeID int, status models.Status) error {
 	s.logger.WithFields(logrus.Fields{
 		"user_id":  userID,
@@ -189,6 +201,8 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 	return nil
 }
 
+// getOrCreateMediaByID tries to retrieve a media entry by its external ID (MyAnimeList ID).
+// If it doesn't exist in the database, it fetches the data from the Jikan API and creates a new media record.
 func (s *UserService) getOrCreateMediaByID(animeID int) (*models.Media, error) {
 	media, err := s.getMediaByExternalID(strconv.Itoa(animeID))
 	if err == nil {
@@ -205,7 +219,8 @@ func (s *UserService) getOrCreateMediaByID(animeID int) (*models.Media, error) {
 	return s.createMediaFromJikan(*jikanAnime)
 }
 
-// /
+// getMediaByExternalID retrieves a media record from the database using its external (MyAnimeList) ID.
+// Returns an error if not found.
 func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, error) {
 	query := `
 	SELECT id, external_id, title, type, description, release_date, poster_url, rating, created_at
@@ -222,6 +237,8 @@ func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, er
 	return &media, nil
 }
 
+// createMediaFromJikan creates a new media record in the database using data fetched from the Jikan API.
+// It stores the media in the database and caches the raw Jikan response in Redis.
 func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models.Media, error) {
 	externalID := strconv.Itoa(jikanAnime.MalID)
 	title := jikanAnime.Title
@@ -270,6 +287,8 @@ func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models
 	return &media, nil
 }
 
+// invalidateUserCache removes the user's cached profile from Redis, if caching is enabled.
+// Used after any update to ensure fresh data is fetched on the next request.
 func (s *UserService) invalidateUserCache(userID string) {
 	if s.redis == nil {
 		return
@@ -281,6 +300,9 @@ func (s *UserService) invalidateUserCache(userID string) {
 	}
 }
 
+// RemoveFromUserList deletes a media item from the user's list using the anime ID.
+// Returns an error if the media does not exist in the user's list.
+// Invalidates user cache after deletion.
 func (s *UserService) RemoveFromUserList(userID string, animeID int) error {
 	s.logger.WithFields(logrus.Fields{
 		"user_id":  userID,
@@ -315,6 +337,9 @@ func (s *UserService) RemoveFromUserList(userID string, animeID int) error {
 	return nil
 }
 
+// UpdateAnimeStatus updates the status (e.g., watching, completed) of a specific anime in the user's list.
+// Returns an error if the anime is not found in the user's list.
+// Invalidates user cache after update.
 func (s *UserService) UpdateAnimeStatus(userID string, animeID int, status models.Status) error {
 	// fetch media record by external id
 	media, err := s.getMediaByExternalID(strconv.Itoa(animeID))
@@ -342,6 +367,9 @@ func (s *UserService) UpdateAnimeStatus(userID string, animeID int, status model
 	return nil
 }
 
+// GetUserList retrieves all media entries from a user's list.
+// Optionally filters by media status if a statusFilter is provided.
+// Returns a slice of UserMediaWithDetails which includes both user-specific and media-specific data.
 func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.UserMediaWithDetails, error) {
 	query := `
 		SELECT
