@@ -165,13 +165,19 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 	`
 
 	err = s.db.QueryRow(context.Background(), checkQuery, userID, media.ID).Scan(&existingAnimeID)
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("failed to check existing user media: %w", err)
+
+	isNewEntry := false
+	if err != nil {
+		if err == sql.ErrNoRows {
+			isNewEntry = true
+		} else {
+			return fmt.Errorf("failed to check existing user media: %w", err)
+		}
 	}
 
 	now := time.Now()
 
-	if err == sql.ErrNoRows {
+	if isNewEntry {
 		insertQuery := `
 			INSERT INTO user_media (user_id, media_id, status, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $4)
@@ -190,7 +196,6 @@ func (s *UserService) AddToUserList(userID string, animeID int, status models.St
 			`
 
 		_, err = s.db.Exec(context.Background(), updateQuery, userID, media.ID, status, now)
-
 		if err != nil {
 			return fmt.Errorf("failed to update user media: %w", err)
 		}
@@ -229,11 +234,32 @@ func (s *UserService) getMediaByExternalID(externalID string) (*models.Media, er
 	`
 
 	var media models.Media
-	err := s.db.QueryRow(context.Background(), query, externalID).Scan(media.ID, media.ExternalID, media.Title, media.Type, media.Description,
-		media.ReleaseDate, media.PosterURL, media.Rating, media.CreatedAt)
+	var releaseDate sql.NullString
+	var rating sql.NullFloat64
+
+	err := s.db.QueryRow(context.Background(), query, externalID).Scan(
+		&media.ID,
+		&media.ExternalID,
+		&media.Title,
+		&media.Type,
+		&media.Description,
+		&releaseDate, // Handle NULL
+		&media.PosterURL,
+		&rating, // Handle NULL
+		&media.CreatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
+
+	// Convert NULL values
+	if releaseDate.Valid {
+		media.ReleaseDate = &releaseDate.String
+	}
+	if rating.Valid {
+		media.Rating = &rating.Float64
+	}
+
 	return &media, nil
 }
 
@@ -245,10 +271,10 @@ func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models
 	description := jikanAnime.Synopsis
 	releaseDate := ""
 	posterURL := ""
-	rating := 0.0
+	var rating *float64
 
 	if jikanAnime.Score > 0 {
-		rating = jikanAnime.Score
+		rating = &jikanAnime.Score
 	}
 	if len(jikanAnime.Images.JPG.ImageURL) > 0 {
 		posterURL = jikanAnime.Images.JPG.ImageURL
@@ -260,19 +286,37 @@ func (s *UserService) createMediaFromJikan(jikanAnime models.AnimeData) (*models
 	// Insert media record
 	insertQuery := `
 		INSERT INTO media (external_id, title, type, description, release_date, poster_url, rating, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8)
 		RETURNING id, external_id, title, type, description, release_date, poster_url, rating, created_at
 	`
 
 	var media models.Media
+	var dbReleaseDate sql.NullString
+	var dbRating sql.NullFloat64
 	now := time.Now()
 
-	err := s.db.QueryRow(context.Background(), insertQuery, externalID, title, "anime", description, releaseDate, posterURL, rating, now).Scan(
-		&media.ID, &media.ExternalID, &media.Title, &media.Type, &media.Description,
-		&media.ReleaseDate, &media.PosterURL, &media.Rating, &media.CreatedAt,
+	err := s.db.QueryRow(context.Background(), insertQuery,
+		externalID, title, "anime", description, releaseDate, posterURL, rating, now).Scan(
+		&media.ID,
+		&media.ExternalID,
+		&media.Title,
+		&media.Type,
+		&media.Description,
+		&dbReleaseDate, // Handle NULL return
+		&media.PosterURL,
+		&dbRating, // Handle NULL return
+		&media.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert media: %w", err)
+	}
+
+	// Convert NULL values back
+	if dbReleaseDate.Valid {
+		media.ReleaseDate = &dbReleaseDate.String
+	}
+	if dbRating.Valid {
+		media.Rating = &dbRating.Float64
 	}
 
 	// Cache anime details
@@ -348,10 +392,10 @@ func (s *UserService) UpdateAnimeStatus(userID string, animeID int, status model
 	}
 
 	query := `
-			UPDATE user_media
-			SET status = $1, updated_at = NOW()
-			WHERE user_id = $2 AND media_id = $3
-		`
+		UPDATE user_media
+		SET status = $1, updated_at = NOW()
+		WHERE user_id = $2 AND media_id = $3
+	`
 
 	result, err := s.db.Exec(context.Background(), query, status, userID, media.ID)
 	if err != nil {
@@ -367,10 +411,17 @@ func (s *UserService) UpdateAnimeStatus(userID string, animeID int, status model
 	return nil
 }
 
+func (s *UserService) contextWithTimeout() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
+}
+
 // GetUserList retrieves all media entries from a user's list.
 // Optionally filters by media status if a statusFilter is provided.
 // Returns a slice of UserMediaWithDetails which includes both user-specific and media-specific data.
 func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.UserMediaWithDetails, error) {
+	ctx, cancel := s.contextWithTimeout()
+	defer cancel()
+
 	query := `
 		SELECT
 			um.id, um.user_id, um.media_id, um.status, um.rating, um.notes, um.created_at, um.updated_at,
@@ -387,7 +438,7 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 		args = append(args, statusFilter)
 	}
 
-	rows, err := s.db.Query(context.Background(), query, args...)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
