@@ -341,3 +341,63 @@ func (s *UserService) UpdateAnimeStatus(userID string, animeID int, status model
 
 	return nil
 }
+
+func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.UserMediaWithDetails, error) {
+	query := `
+		SELECT
+			um.id, um.user_id, um.media_id, um.status, um.rating, um.notes, um.created_at, um.updated_at,
+			m.id, m.external_id, m.title, m.type, m.description, m.release_date, m.poster_url, m.rating, m.created_at
+		FROM user_media um
+		JOIN media m ON um.media_id = m.id
+		WHERE um.user_id = $1
+	`
+
+	args := []interface{}{userID}
+
+	if statusFilter != "" {
+		query += " AND um.status = $2"
+		args = append(args, statusFilter)
+	}
+
+	rows, err := s.db.Query(context.Background(), query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var list []models.UserMediaWithDetails
+
+	for rows.Next() {
+		var item models.UserMediaWithDetails
+
+		err := rows.Scan(
+			// UserMedia fields
+			&item.UserMedia.ID,
+			&item.UserMedia.UserID,
+			&item.UserMedia.MediaID,
+			&item.UserMedia.Status,
+			&item.UserMedia.Rating,
+			&item.UserMedia.Notes,
+			&item.UserMedia.CreatedAt,
+			&item.UserMedia.UpdatedAt,
+
+			// Media fields
+			&item.Media.ID,
+			&item.Media.ExternalID,
+			&item.Media.Title,
+			&item.Media.Type,
+			&item.Media.Description,
+			&item.Media.ReleaseDate,
+			&item.Media.PosterURL,
+			&item.Media.Rating,
+			&item.Media.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		list = append(list, item)
+	}
+
+	return list, nil
+}
