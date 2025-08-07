@@ -418,11 +418,31 @@ func (s *UserService) contextWithTimeout() (context.Context, context.CancelFunc)
 }
 
 // GetUserList retrieves all media entries from a user's list.
+// Now with pagination added
 // Optionally filters by media status if a statusFilter is provided.
 // Returns a slice of UserMediaWithDetails which includes both user-specific and media-specific data.
-func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.UserMediaWithDetails, error) {
+func (s *UserService) GetUserList(userID string, statusFilter string, page, limit int) ([]models.UserMediaWithDetails, int, error) {
 	ctx, cancel := s.contextWithTimeout()
 	defer cancel()
+
+	// Get total count of user's media for pagination
+	var total int
+	countQuery := "SELECT COUNT(*) FROM user_media WHERE user_id = $1"
+	args := []interface{}{userID}
+
+	if statusFilter != "" {
+		countQuery += " AND status = $2"
+		args = append(args, statusFilter)
+	}
+
+	err := s.db.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
+	}
+
+	if total == 0 {
+		return nil, 0, nil
+	}
 
 	query := `
 		SELECT
@@ -433,16 +453,18 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 		WHERE um.user_id = $1
 	`
 
-	args := []interface{}{userID}
-
+	// Append status filter if provided
 	if statusFilter != "" {
 		query += " AND um.status = $2"
-		args = append(args, statusFilter)
+		//	args = append(args, statusFilter)
 	}
+
+	// pagination, add LIMIT and OFFSET
+	query += fmt.Sprintf(" ORDER BY um.updated_at DESC LIMIT %d OFFSET %d", limit, (page-1)*limit)
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, 0, fmt.Errorf("query failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -450,7 +472,6 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 
 	for rows.Next() {
 		var item models.UserMediaWithDetails
-		// Use pgx nullable types for consistency
 		var umRating pgtype.Float8
 		var mRating pgtype.Float8
 		var releaseDate pgtype.Text
@@ -479,7 +500,7 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 			&item.Media.CreatedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan row: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan row: %w", err)
 		}
 
 		// Assign values from pgx nullable types
@@ -501,5 +522,5 @@ func (s *UserService) GetUserList(userID string, statusFilter string) ([]models.
 		list = append(list, item)
 	}
 
-	return list, nil
+	return list, total, nil
 }
