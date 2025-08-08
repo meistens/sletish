@@ -74,13 +74,14 @@ type BotCommand struct {
 }
 
 // CallbackData defines the structure of data attached to inline buttons
-// to facilitate various types of user interaction.
+// to facilitate various types of user interaction, including pagination.
 type CallbackData struct {
-	Action   string `json:"action"`
-	AnimeID  string `json:"anime_id,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Page     int    `json:"page,omitempty"`
-	ListType string `json:"list_type,omitempty"`
+	Action  string `json:"action"`
+	AnimeID string `json:"anime_id,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Page    int    `json:"page,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	Total   int    `json:"total,omitempty"`
 }
 
 // AnswerCallbackQuery represents a request to respond to a callback query.
