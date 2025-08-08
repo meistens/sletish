@@ -3,7 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
-	"sletish/internal/config"
+	"os"
 	"sletish/internal/logger"
 	"sletish/internal/services"
 	"time"
@@ -71,21 +71,14 @@ func (c *Container) Close() {
 }
 
 func newDatabase(ctx context.Context) (*pgxpool.Pool, error) {
-	host, port, user, password, databaseName := config.DatabaseConfig()
-
-	if host == "" || port == "" || user == "" || password == "" || databaseName == "" {
-		return nil, fmt.Errorf("missing required database configuration")
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL is not set")
 	}
-
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, databaseName)
-
-	config, err := pgxpool.ParseConfig(connStr)
+	config, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse database config: %w", err)
+		return nil, fmt.Errorf("failed to parse DATABASE_URL: %w", err)
 	}
-
-	// Better pool configuration
 	config.MaxConns = 25
 	config.MinConns = 5
 	config.MaxConnLifetime = time.Hour
@@ -96,29 +89,27 @@ func newDatabase(ctx context.Context) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection pool: %w", err)
 	}
-
 	if err = pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
-
 	logger.Get().Info("Database connection successful")
 	return pool, nil
 }
 
 func newRedis(ctx context.Context) (*redis.Client, error) {
-	host, port, password := config.RedisConfig()
-
-	client := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", host, port),
-		Password: password,
-		DB:       0,
-	})
-
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		return nil, fmt.Errorf("REDIS_URL is not set")
+	}
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse REDIS_URL: %w", err)
+	}
+	client := redis.NewClient(opt)
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
-
 	logger.Get().Info("Redis connection successful")
 	return client, nil
 }

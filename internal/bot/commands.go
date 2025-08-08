@@ -24,7 +24,6 @@ type Handler struct {
 	userService  *services.UserService
 	logger       *logrus.Logger
 	botToken     string
-	// UPDATE WITH MORE SERVICES ADDED IN THE FUTURE
 }
 
 func NewHandler(animeService *services.Client, userService *services.UserService, logger *logrus.Logger, botToken string) *Handler {
@@ -37,13 +36,11 @@ func NewHandler(animeService *services.Client, userService *services.UserService
 }
 
 func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
-	// Handle callback queries (button clicks)
 	if update.CallbackQuery != nil {
 		h.handleCallbackQuery(ctx, update.CallbackQuery)
 		return
 	}
 
-	// Handle regular messages
 	if update.Message.Text == "" {
 		return
 	}
@@ -52,7 +49,6 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 	userID := strconv.Itoa(update.Message.From.Id)
 	chatID := strconv.Itoa(update.Message.Chat.Id)
 
-	// Ensure user exists with proper error handling
 	if err := h.userService.EnsureUserExists(userID, username); err != nil {
 		h.logger.WithError(err).Error("failed to ensure user exists")
 		h.sendMessage(ctx, chatID, "Sorry, I'm having trouble accessing your account. Please try again.")
@@ -240,7 +236,6 @@ func (h *Handler) handleCallbackViewDetails(ctx context.Context, callback *model
 	h.answerCallback(ctx, callback.Id, "", false)
 }
 
-// handleCallbackListPage processes pagination button clicks for the user's list.
 func (h *Handler) handleCallbackListPage(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
 	userList, total, err := h.userService.GetUserList(userID, data.Status, data.Page, data.Limit)
 	if err != nil {
@@ -365,7 +360,6 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 
 	query := strings.Join(cmd.Args, " ")
 
-	// Input validation
 	if len(query) > 100 {
 		h.sendMessage(ctx, cmd.ChatID, "Search query is too long. Please keep it under 100 characters.")
 		return
@@ -385,13 +379,11 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 		return
 	}
 
-	// no results found for query
 	if len(searchResult.Data) == 0 {
 		h.sendMessage(ctx, cmd.ChatID, "❌ No anime found matching your search")
 		return
 	}
 
-	// Format message with interactive keyboards
 	message := h.formatSearchResults(searchResult.Data)
 	keyboard := h.createSearchResultsKeyboard(searchResult.Data)
 
@@ -433,7 +425,6 @@ func (h *Handler) handleAdd(ctx context.Context, cmd BotCommand) {
 		return
 	}
 
-	// add to user personalized list
 	if err := h.userService.AddToUserList(cmd.UserID, animeID, status); err != nil {
 		h.logger.WithError(err).Error("Failed to add anime to user list")
 
@@ -478,25 +469,21 @@ func (h *Handler) handleRemove(ctx context.Context, cmd BotCommand) {
 	h.sendMessage(ctx, cmd.ChatID, "✅ Successfully removed anime from your list.")
 }
 
-// handleList fetches and displays the user's anime list with pagination.
 func (h *Handler) handleList(ctx context.Context, cmd BotCommand) {
 	var statusFilter string
 	page := 1
-	limit := 5 // Default limit per page, no more, maybe less
+	limit := 5
 
-	// Parse arguments: /list [status] [page]
 	if len(cmd.Args) > 0 {
 		firstArg := strings.ToLower(cmd.Args[0])
 		if isValidStatus(models.Status(firstArg)) {
 			statusFilter = firstArg
-			// Check if there's a page number after the status
 			if len(cmd.Args) > 1 {
 				if p, err := strconv.Atoi(cmd.Args[1]); err == nil && p > 0 {
 					page = p
 				}
 			}
 		} else {
-			// First argument is not a valid status, check if it's a page number
 			if p, err := strconv.Atoi(firstArg); err == nil && p > 0 {
 				page = p
 			}
@@ -523,11 +510,9 @@ func (h *Handler) handleList(ctx context.Context, cmd BotCommand) {
 	h.sendMessageWithKeyboard(ctx, cmd.ChatID, message, keyboard)
 }
 
-// createPaginationKeyboard generates an inline keyboard with pagination buttons.
 func (h *Handler) createPaginationKeyboard(currentPage, limit, total int, statusFilter string) *models.InlineKeyboardMarkup {
 	var buttons []models.InlineKeyboardButton
 
-	// Previous page button
 	if currentPage > 1 {
 		callbackData := models.CallbackData{
 			Action: "list_page",
@@ -540,12 +525,10 @@ func (h *Handler) createPaginationKeyboard(currentPage, limit, total int, status
 		buttons = append(buttons, models.InlineKeyboardButton{Text: "⬅️ Previous", CallbackData: string(data)})
 	}
 
-	// Current page info
 	totalPages := (total + limit - 1) / limit
 	pageInfo := fmt.Sprintf("📄 %d/%d", currentPage, totalPages)
 	buttons = append(buttons, models.InlineKeyboardButton{Text: pageInfo, CallbackData: "noop"})
 
-	// Next page button
 	if currentPage*limit < total {
 		callbackData := models.CallbackData{
 			Action: "list_page",
@@ -558,7 +541,7 @@ func (h *Handler) createPaginationKeyboard(currentPage, limit, total int, status
 		buttons = append(buttons, models.InlineKeyboardButton{Text: "Next ➡️", CallbackData: string(data)})
 	}
 
-	if len(buttons) <= 1 { // Only page info button
+	if len(buttons) <= 1 {
 		return nil
 	}
 
@@ -640,16 +623,13 @@ Need more help? Just ask!`
 	h.sendMessage(ctx, cmd.ChatID, helpMessage)
 }
 
-// Keyboard creation methods
 func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models.InlineKeyboardMarkup {
 	var rows [][]models.InlineKeyboardButton
 
-	// Add quick action buttons for first result
 	if len(animes) > 0 {
 		firstAnime := animes[0]
 		animeID := strconv.Itoa(firstAnime.MalID)
 
-		// Status selection row
 		statusRow := []models.InlineKeyboardButton{
 			{
 				Text:         "📝 Watchlist",
@@ -662,7 +642,6 @@ func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models
 		}
 		rows = append(rows, statusRow)
 
-		// More status options
 		statusRow2 := []models.InlineKeyboardButton{
 			{
 				Text:         "✅ Completed",
@@ -675,7 +654,6 @@ func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models
 		}
 		rows = append(rows, statusRow2)
 
-		// Details and external link row
 		detailsRow := []models.InlineKeyboardButton{
 			{
 				Text:         "📖 Details",
@@ -693,86 +671,6 @@ func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models
 		InlineKeyboard: rows,
 	}
 }
-
-// Too much clutter, keep just-in-case
-// func (h *Handler) createUserListKeyboard(userList []models.UserMediaWithDetails, filterStatus models.Status) *models.InlineKeyboardMarkup {
-// 	var rows [][]models.InlineKeyboardButton
-
-// 	// If showing a single status, add management buttons for first few items
-// 	if filterStatus != "" && len(userList) > 0 {
-// 		for i, item := range userList {
-// 			if i >= 3 { // Limit to first 3 items to avoid too many buttons
-// 				break
-// 			}
-
-// 			animeID := item.Media.ExternalID
-// 			title := item.Media.Title
-// 			if len(title) > 20 {
-// 				title = title[:20] + "..."
-// 			}
-
-// 			// Status update buttons
-// 			statusRow := []models.InlineKeyboardButton{
-// 				{
-// 					Text:         fmt.Sprintf("📝 %s", title),
-// 					CallbackData: h.createCallbackData("view_details", animeID, ""),
-// 				},
-// 			}
-
-// 			// Add status change button based on current status
-// 			switch item.UserMedia.Status {
-// 			case models.StatusWatching:
-// 				statusRow = append(statusRow, models.InlineKeyboardButton{
-// 					Text:         "✅ Complete",
-// 					CallbackData: h.createCallbackData("update_status", animeID, "completed"),
-// 				})
-// 			case models.StatusWatchlist:
-// 				statusRow = append(statusRow, models.InlineKeyboardButton{
-// 					Text:         "👀 Start Watching",
-// 					CallbackData: h.createCallbackData("update_status", animeID, "watching"),
-// 				})
-// 			case models.StatusCompleted:
-// 				statusRow = append(statusRow, models.InlineKeyboardButton{
-// 					Text:         "🗑 Remove",
-// 					CallbackData: h.createCallbackData("remove_anime", animeID, ""),
-// 				})
-// 			}
-
-// 			rows = append(rows, statusRow)
-// 		}
-// 	}
-
-// 	// Filter buttons row
-// 	if filterStatus == "" {
-// 		filterRow := []models.InlineKeyboardButton{
-// 			{
-// 				Text:         "👀 Watching",
-// 				CallbackData: h.createCallbackData("list_page", "", "watching"),
-// 			},
-// 			{
-// 				Text:         "✅ Completed",
-// 				CallbackData: h.createCallbackData("list_page", "", "completed"),
-// 			},
-// 		}
-// 		rows = append(rows, filterRow)
-
-// 		filterRow2 := []models.InlineKeyboardButton{
-// 			{
-// 				Text:         "📝 Watchlist",
-// 				CallbackData: h.createCallbackData("list_page", "", "watchlist"),
-// 			},
-// 			{
-// 				Text:         "⏸ On Hold",
-// 				CallbackData: h.createCallbackData("list_page", "", "on_hold"),
-// 			},
-// 		}
-// 		rows = append(rows, filterRow2)
-// 	}
-
-// 	return &models.InlineKeyboardMarkup{
-// 		InlineKeyboard: rows,
-// 	}
-// }
 
 func (h *Handler) createAnimeDetailsKeyboard(animeID string) *models.InlineKeyboardMarkup {
 	rows := [][]models.InlineKeyboardButton{
@@ -815,7 +713,6 @@ func (h *Handler) createCallbackData(action, animeID, status string) string {
 	return string(jsonData)
 }
 
-// Enhanced formatting methods
 func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 	if len(animes) == 0 {
 		return "No anime found for your search query."
@@ -824,7 +721,6 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 	var message strings.Builder
 	message.WriteString("<b>🔍 Search Results</b>\n\n")
 
-	// Show detailed info for first result
 	anime := animes[0]
 	message.WriteString(fmt.Sprintf("<b>%s</b>\n", anime.Title))
 	message.WriteString(fmt.Sprintf("🆔 ID: <code>%d</code>", anime.MalID))
@@ -840,7 +736,6 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 	}
 	message.WriteString("\n")
 
-	// Type and Status
 	var details []string
 	if anime.Type != "" {
 		details = append(details, fmt.Sprintf("📱 %s", anime.Type))
@@ -852,7 +747,6 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 		message.WriteString(strings.Join(details, " | ") + "\n")
 	}
 
-	// Synopsis (shortened)
 	if anime.Synopsis != "" {
 		synopsis := anime.Synopsis
 		if len(synopsis) > 200 {
@@ -861,11 +755,10 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 		message.WriteString(fmt.Sprintf("📝 %s\n", synopsis))
 	}
 
-	// Show other results briefly
 	if len(animes) > 1 {
 		message.WriteString(fmt.Sprintf("\n<b>Other Results (%d more):</b>\n", len(animes)-1))
 		for i, otherAnime := range animes[1:] {
-			if i >= 4 { // Show max 5 more
+			if i >= 4 {
 				message.WriteString(fmt.Sprintf("... and %d more results\n", len(animes)-6))
 				break
 			}
@@ -907,7 +800,6 @@ func (h *Handler) formatAnimeDetails(anime models.AnimeData) string {
 		message.WriteString(fmt.Sprintf("📊 Status: %s\n", anime.Status))
 	}
 
-	// Genres
 	if len(anime.Genres) > 0 {
 		genres := make([]string, 0, len(anime.Genres))
 		for _, genre := range anime.Genres {
@@ -916,7 +808,6 @@ func (h *Handler) formatAnimeDetails(anime models.AnimeData) string {
 		message.WriteString(fmt.Sprintf("🏷 Genres: %s\n", strings.Join(genres, ", ")))
 	}
 
-	// Synopsis
 	if anime.Synopsis != "" {
 		message.WriteString(fmt.Sprintf("\n📝 <b>Synopsis:</b>\n%s\n", anime.Synopsis))
 	}
@@ -926,27 +817,9 @@ func (h *Handler) formatAnimeDetails(anime models.AnimeData) string {
 	return message.String()
 }
 
-// Helper functions to safely get float64 value from pointer
-func getFloatValue(f *float64) float64 {
-	if f == nil {
-		return 0
-	}
-	return *f
-}
-
-func getStringValue(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-// End
-
 func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, statusFilter string, page, total, limit int) string {
 	var message strings.Builder
 
-	// Calculate pagination info
 	totalPages := (total + limit - 1) / limit
 	start := (page-1)*limit + 1
 	end := start + len(userList) - 1
@@ -959,14 +832,12 @@ func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, statusF
 
 	message.WriteString(fmt.Sprintf("📄 Page %d of %d | Items %d-%d of %d\n\n", page, totalPages, start, end, total))
 
-	// Group by status if showing all
 	if statusFilter == "" {
 		statusGroups := make(map[models.Status][]models.UserMediaWithDetails)
 		for _, item := range userList {
 			statusGroups[item.UserMedia.Status] = append(statusGroups[item.UserMedia.Status], item)
 		}
 
-		// Order statuses logically
 		orderedStatuses := []models.Status{
 			models.StatusWatching,
 			models.StatusCompleted,
@@ -991,18 +862,15 @@ func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, statusF
 			message.WriteString("\n")
 		}
 	} else {
-		// Show detailed list for specific status
 		statusEmoji := getStatusEmoji(models.Status(statusFilter))
 		for _, item := range userList {
 			message.WriteString(fmt.Sprintf("%s <b>%s</b>\n", statusEmoji, item.Media.Title))
 			message.WriteString(fmt.Sprintf("   🆔 ID: %s", item.Media.ExternalID))
 
-			// Handle nullable rating for Media
 			if item.Media.Rating != nil && *item.Media.Rating > 0 {
 				message.WriteString(fmt.Sprintf(" | ⭐ %.1f", *item.Media.Rating))
 			}
 
-			// Handle nullable release date
 			if item.Media.ReleaseDate != nil && *item.Media.ReleaseDate != "" {
 				message.WriteString(fmt.Sprintf(" | 📅 %s", *item.Media.ReleaseDate))
 			}
@@ -1036,7 +904,6 @@ func getStatusEmoji(status models.Status) string {
 	}
 }
 
-// Message sending methods
 func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
 	h.sendMessageWithKeyboard(ctx, chatID, text, nil)
 }
@@ -1074,7 +941,6 @@ func (h *Handler) editMessage(ctx context.Context, chatID string, messageID int,
 			"error":      err.Error(),
 		}).Error("Failed to edit message")
 
-		// Fallback: send new message if edit fails
 		h.sendMessageWithKeyboard(ctx, chatID, text, keyboard)
 	} else {
 		h.logger.WithFields(logrus.Fields{

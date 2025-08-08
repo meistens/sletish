@@ -59,4 +59,4 @@ This is the initial version focused on core functionality. Future updates will i
 
 ## Questions or issues
 
-If you encounter any problems or have suggestions, feel free to open an issue in this repository.
+If you encounter any problems or have suggestions, share suggestions, but issues... it's still a work in progress
