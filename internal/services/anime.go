@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sletish/internal/models"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -34,8 +34,7 @@ type Client struct {
 	baseURL     string
 	httpClient  *http.Client
 	logger      *logrus.Logger
-	lastRequest time.Time
-	rateLimiter chan struct{}
+	rateLimiter *rate.Limiter
 	redis       *redis.Client
 }
 
@@ -80,10 +79,10 @@ func NewClientWithConfig(config *ClientConfig) *Client {
 			},
 		},
 		logger:      config.Logger,
-		rateLimiter: make(chan struct{}, 1),
+		rateLimiter: rate.NewLimiter(rate.Limit(1)/rate.Limit(time.Duration(config.RateLimit).Seconds()), 1),
 		redis:       config.Redis,
 	}
-	client.rateLimiter <- struct{}{}
+
 	return client
 }
 
@@ -153,7 +152,7 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 	}
 
 	var message strings.Builder
-	message.WriteString("<b>Anime Search Results:</b>\n\n")
+	message.WriteString("<b>🔍 Anime Search Results:</b>\n\n")
 
 	// values above 13 will not work...
 	for i, anime := range animes {
@@ -161,62 +160,88 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 			break
 		}
 
+		// Anime title with number
 		message.WriteString(fmt.Sprintf("<b>%d. %s</b>\n", i+1, anime.Title))
 
+		// ID for adding to list
+		message.WriteString(fmt.Sprintf("🆔 ID: <code>%d</code>", anime.MalID))
+
+		// Score with star emoji
 		if anime.Score > 0 {
-			message.WriteString(fmt.Sprintf("Score: %.1f\n", anime.Score))
+			message.WriteString(fmt.Sprintf(" | ⭐ %.1f", anime.Score))
 		}
 
+		// Episodes count
 		if anime.Episodes > 0 {
-			message.WriteString(fmt.Sprintf("Episodes: %d\n", anime.Episodes))
+			message.WriteString(fmt.Sprintf(" | 📺 %d eps", anime.Episodes))
 		}
 
+		// Year
 		if anime.Year > 0 {
-			message.WriteString(fmt.Sprintf("Year: %d\n", anime.Year))
+			message.WriteString(fmt.Sprintf(" | 📅 %d", anime.Year))
 		}
 
+		message.WriteString("\n")
+
+		// Type and Status on second line
+		var details []string
 		if anime.Type != "" {
-			message.WriteString(fmt.Sprintf("Type: %s\n", anime.Type))
+			details = append(details, fmt.Sprintf("📱 %s", anime.Type))
 		}
-
 		if anime.Status != "" {
-			message.WriteString(fmt.Sprintf("Status: %s\n", anime.Status))
+			details = append(details, fmt.Sprintf("📊 %s", anime.Status))
+		}
+		if len(details) > 0 {
+			message.WriteString(strings.Join(details, " | ") + "\n")
 		}
 
+		// Genres
 		if len(anime.Genres) > 0 {
-			genres := make([]string, len(anime.Genres))
-			for j, genre := range anime.Genres {
-				genres[j] = genre.Name
+			genres := make([]string, 0, len(anime.Genres))
+			for _, genre := range anime.Genres {
+				genres = append(genres, genre.Name)
 			}
-			message.WriteString(fmt.Sprintf("Genres: %s\n", strings.Join(genres, ", ")))
+			genreText := strings.Join(genres, ", ")
+			if len(genreText) > 50 {
+				genreText = genreText[:50] + "..."
+			}
+			message.WriteString(fmt.Sprintf("🏷 %s\n", genreText))
 		}
 
+		// Synopsis (shortened)
 		if anime.Synopsis != "" {
 			synopsis := anime.Synopsis
-			if len(synopsis) > 200 {
-				synopsis = synopsis[:200] + "..."
+			if len(synopsis) > 150 {
+				synopsis = synopsis[:150] + "..."
 			}
-			message.WriteString(fmt.Sprintf("Synopsis: %s\n", synopsis))
+			message.WriteString(fmt.Sprintf("📝 %s\n", synopsis))
 		}
 
-		message.WriteString(fmt.Sprintf("<a href=\"https://myanimelist.net/anime/%d\">View on MyAnimeList</a>\n", anime.MalID))
-		message.WriteString("\n")
+		// Link to MyAnimeList
+		message.WriteString(fmt.Sprintf("🔗 <a href=\"https://myanimelist.net/anime/%d\">View on MyAnimeList</a>\n", anime.MalID))
+
+		// Separator for readability
+		if i < len(animes)-1 && i < 9 { // Don't add separator after last item
+			message.WriteString("\n━━━━━━━━━━━━━━━━━━━\n\n")
+		} else {
+			message.WriteString("\n")
+		}
 	}
 
 	return message.String()
 }
 
-// Replace the makeRequest method in internal/services/anime.go around line 120
 func (c *Client) makeRequest(url string) ([]byte, error) {
 	var rErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		c.enforceRateLimit()
-		<-c.rateLimiter // Take token
+		if !c.rateLimiter.Allow() {
+			c.logger.Debug("Rate limit: sleeping")
+			c.rateLimiter.Wait(context.Background())
+		}
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 		if err != nil {
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to create request: %w", err)
 			continue
 		}
@@ -226,7 +251,6 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to make HTTP request: %w", err)
 			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
@@ -235,9 +259,8 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("API returned status code %d", resp.StatusCode)
-			c.retryLogger(attempt, url, rErr)
+			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
 			continue
 		}
@@ -246,7 +269,6 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 		resp.Body.Close()
 
 		if err != nil {
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to read response body: %w", err)
 			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
@@ -260,21 +282,10 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 			"response_size": len(body),
 		}).Debug("API request successful")
 
-		c.lastRequest = time.Now()
-		c.rateLimiter <- struct{}{} // Return token on success
 		return body, nil
 	}
 
-	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, rErr)
-}
-
-func (c *Client) enforceRateLimit() {
-	now := time.Now()
-	if c.lastRequest.Add(rateLimitDelay).After(now) {
-		zzzTime := c.lastRequest.Add(rateLimitDelay).Sub(now)
-		c.logger.WithField("sleep_time", zzzTime).Debug("Rate limit: sleeping")
-		time.Sleep(zzzTime)
-	}
+	return nil, fmt.Errorf("failed %d, attempts: %w", maxRetries, rErr)
 }
 
 func (c *Client) retryLogger(attempt int, url string, err error) {
@@ -294,6 +305,7 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 	}
 
 	// read with size limit
+
 	var initialCap int64 = 1024 // Default initial capacity
 	if resp.ContentLength > 0 && resp.ContentLength <= maxResponseSize {
 		initialCap = resp.ContentLength
@@ -308,12 +320,12 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 		if n > 0 {
 			totalRead += n
 			if totalRead > maxResponseSize {
-				return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
+				return nil, fmt.Errorf("response too large: exceeded % bytes", maxResponseSize)
 			}
 			body = append(body, buf[:n]...)
 		}
 		if err != nil {
-			if err == io.EOF { // Proper EOF handling
+			if err.Error() == "EOF" {
 				break
 			}
 			return nil, err
@@ -322,6 +334,7 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 
 	return body, nil
 }
+
 func (c *Client) waitForRetry(attempt int) {
 	if attempt < maxRetries-1 {
 		delay := time.Duration(attempt+1) * retryDelay
