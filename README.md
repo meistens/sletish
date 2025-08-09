@@ -58,5 +58,4 @@ See your watching statistics and account information.
 This is the initial version focused on core functionality. Future updates will include more interactive features and enhanced navigation.
 
 ## Questions or issues
-
 If you encounter any problems or have suggestions, share suggestions, but issues... it's still a work in progress

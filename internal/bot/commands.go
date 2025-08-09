@@ -24,6 +24,7 @@ type Handler struct {
 	userService  *services.UserService
 	logger       *logrus.Logger
 	botToken     string
+	// UPDATE WITH MORE SERVICES ADDED IN THE FUTURE
 }
 
 func NewHandler(animeService *services.Client, userService *services.UserService, logger *logrus.Logger, botToken string) *Handler {
@@ -36,11 +37,13 @@ func NewHandler(animeService *services.Client, userService *services.UserService
 }
 
 func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
+	// Handle callback queries (button clicks)
 	if update.CallbackQuery != nil {
 		h.handleCallbackQuery(ctx, update.CallbackQuery)
 		return
 	}
 
+	// Handle regular messages
 	if update.Message.Text == "" {
 		return
 	}
@@ -49,6 +52,7 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 	userID := strconv.Itoa(update.Message.From.Id)
 	chatID := strconv.Itoa(update.Message.Chat.Id)
 
+	// Ensure user exists with proper error handling
 	if err := h.userService.EnsureUserExists(userID, username); err != nil {
 		h.logger.WithError(err).Error("failed to ensure user exists")
 		h.sendMessage(ctx, chatID, "Sorry, I'm having trouble accessing your account. Please try again.")
@@ -236,6 +240,7 @@ func (h *Handler) handleCallbackViewDetails(ctx context.Context, callback *model
 	h.answerCallback(ctx, callback.Id, "", false)
 }
 
+// handleCallbackListPage processes pagination button clicks for the user's list.
 func (h *Handler) handleCallbackListPage(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
 	userList, total, err := h.userService.GetUserList(userID, data.Status, data.Page, data.Limit)
 	if err != nil {
@@ -360,6 +365,7 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 
 	query := strings.Join(cmd.Args, " ")
 
+	// Input validation
 	if len(query) > 100 {
 		h.sendMessage(ctx, cmd.ChatID, "Search query is too long. Please keep it under 100 characters.")
 		return
@@ -379,11 +385,13 @@ func (h *Handler) handleSearch(ctx context.Context, cmd BotCommand) {
 		return
 	}
 
+	// no results found for query
 	if len(searchResult.Data) == 0 {
 		h.sendMessage(ctx, cmd.ChatID, "❌ No anime found matching your search")
 		return
 	}
 
+	// Format message with interactive keyboards
 	message := h.formatSearchResults(searchResult.Data)
 	keyboard := h.createSearchResultsKeyboard(searchResult.Data)
 
@@ -425,6 +433,7 @@ func (h *Handler) handleAdd(ctx context.Context, cmd BotCommand) {
 		return
 	}
 
+	// add to user personalized list
 	if err := h.userService.AddToUserList(cmd.UserID, animeID, status); err != nil {
 		h.logger.WithError(err).Error("Failed to add anime to user list")
 
@@ -469,21 +478,25 @@ func (h *Handler) handleRemove(ctx context.Context, cmd BotCommand) {
 	h.sendMessage(ctx, cmd.ChatID, "✅ Successfully removed anime from your list.")
 }
 
+// handleList fetches and displays the user's anime list with pagination.
 func (h *Handler) handleList(ctx context.Context, cmd BotCommand) {
 	var statusFilter string
 	page := 1
-	limit := 5
+	limit := 5 // Default limit per page, no more, maybe less
 
+	// Parse arguments: /list [status] [page]
 	if len(cmd.Args) > 0 {
 		firstArg := strings.ToLower(cmd.Args[0])
 		if isValidStatus(models.Status(firstArg)) {
 			statusFilter = firstArg
+			// Check if there's a page number after the status
 			if len(cmd.Args) > 1 {
 				if p, err := strconv.Atoi(cmd.Args[1]); err == nil && p > 0 {
 					page = p
 				}
 			}
 		} else {
+			// First argument is not a valid status, check if it's a page number
 			if p, err := strconv.Atoi(firstArg); err == nil && p > 0 {
 				page = p
 			}
@@ -510,9 +523,11 @@ func (h *Handler) handleList(ctx context.Context, cmd BotCommand) {
 	h.sendMessageWithKeyboard(ctx, cmd.ChatID, message, keyboard)
 }
 
+// createPaginationKeyboard generates an inline keyboard with pagination buttons.
 func (h *Handler) createPaginationKeyboard(currentPage, limit, total int, statusFilter string) *models.InlineKeyboardMarkup {
 	var buttons []models.InlineKeyboardButton
 
+	// Previous page button
 	if currentPage > 1 {
 		callbackData := models.CallbackData{
 			Action: "list_page",
@@ -525,10 +540,12 @@ func (h *Handler) createPaginationKeyboard(currentPage, limit, total int, status
 		buttons = append(buttons, models.InlineKeyboardButton{Text: "⬅️ Previous", CallbackData: string(data)})
 	}
 
+	// Current page info
 	totalPages := (total + limit - 1) / limit
 	pageInfo := fmt.Sprintf("📄 %d/%d", currentPage, totalPages)
 	buttons = append(buttons, models.InlineKeyboardButton{Text: pageInfo, CallbackData: "noop"})
 
+	// Next page button
 	if currentPage*limit < total {
 		callbackData := models.CallbackData{
 			Action: "list_page",
@@ -541,7 +558,7 @@ func (h *Handler) createPaginationKeyboard(currentPage, limit, total int, status
 		buttons = append(buttons, models.InlineKeyboardButton{Text: "Next ➡️", CallbackData: string(data)})
 	}
 
-	if len(buttons) <= 1 {
+	if len(buttons) <= 1 { // Only page info button
 		return nil
 	}
 
@@ -758,7 +775,7 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 	if len(animes) > 1 {
 		message.WriteString(fmt.Sprintf("\n<b>Other Results (%d more):</b>\n", len(animes)-1))
 		for i, otherAnime := range animes[1:] {
-			if i >= 4 {
+			if i >= 4 { // Show max 5 more
 				message.WriteString(fmt.Sprintf("... and %d more results\n", len(animes)-6))
 				break
 			}
@@ -800,6 +817,7 @@ func (h *Handler) formatAnimeDetails(anime models.AnimeData) string {
 		message.WriteString(fmt.Sprintf("📊 Status: %s\n", anime.Status))
 	}
 
+	// Genres
 	if len(anime.Genres) > 0 {
 		genres := make([]string, 0, len(anime.Genres))
 		for _, genre := range anime.Genres {
@@ -808,6 +826,7 @@ func (h *Handler) formatAnimeDetails(anime models.AnimeData) string {
 		message.WriteString(fmt.Sprintf("🏷 Genres: %s\n", strings.Join(genres, ", ")))
 	}
 
+	// Synopsis
 	if anime.Synopsis != "" {
 		message.WriteString(fmt.Sprintf("\n📝 <b>Synopsis:</b>\n%s\n", anime.Synopsis))
 	}

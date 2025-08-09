@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sletish/internal/models"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -34,8 +34,7 @@ type Client struct {
 	baseURL     string
 	httpClient  *http.Client
 	logger      *logrus.Logger
-	lastRequest time.Time
-	rateLimiter chan struct{}
+	rateLimiter *rate.Limiter
 	redis       *redis.Client
 }
 
@@ -80,10 +79,10 @@ func NewClientWithConfig(config *ClientConfig) *Client {
 			},
 		},
 		logger:      config.Logger,
-		rateLimiter: make(chan struct{}, 1),
+		rateLimiter: rate.NewLimiter(rate.Limit(1)/rate.Limit(time.Duration(config.RateLimit).Seconds()), 1),
 		redis:       config.Redis,
 	}
-	client.rateLimiter <- struct{}{}
+
 	return client
 }
 
@@ -232,17 +231,17 @@ func FormatAnimeMessage(animes []models.AnimeData) string {
 	return message.String()
 }
 
-// Replace the makeRequest method in internal/services/anime.go around line 120
 func (c *Client) makeRequest(url string) ([]byte, error) {
 	var rErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		c.enforceRateLimit()
-		<-c.rateLimiter // Take token
+		if !c.rateLimiter.Allow() {
+			c.logger.Debug("Rate limit: sleeping")
+			c.rateLimiter.Wait(context.Background())
+		}
 
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 		if err != nil {
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to create request: %w", err)
 			continue
 		}
@@ -252,7 +251,6 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to make HTTP request: %w", err)
 			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
@@ -261,9 +259,8 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("API returned status code %d", resp.StatusCode)
-			c.retryLogger(attempt, url, rErr)
+			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
 			continue
 		}
@@ -272,7 +269,6 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 		resp.Body.Close()
 
 		if err != nil {
-			c.rateLimiter <- struct{}{} // Return token on error
 			rErr = fmt.Errorf("failed to read response body: %w", err)
 			c.retryLogger(attempt, url, err)
 			c.waitForRetry(attempt)
@@ -286,21 +282,10 @@ func (c *Client) makeRequest(url string) ([]byte, error) {
 			"response_size": len(body),
 		}).Debug("API request successful")
 
-		c.lastRequest = time.Now()
-		c.rateLimiter <- struct{}{} // Return token on success
 		return body, nil
 	}
 
-	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, rErr)
-}
-
-func (c *Client) enforceRateLimit() {
-	now := time.Now()
-	if c.lastRequest.Add(rateLimitDelay).After(now) {
-		zzzTime := c.lastRequest.Add(rateLimitDelay).Sub(now)
-		c.logger.WithField("sleep_time", zzzTime).Debug("Rate limit: sleeping")
-		time.Sleep(zzzTime)
-	}
+	return nil, fmt.Errorf("failed %d, attempts: %w", maxRetries, rErr)
 }
 
 func (c *Client) retryLogger(attempt int, url string, err error) {
@@ -320,6 +305,7 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 	}
 
 	// read with size limit
+
 	var initialCap int64 = 1024 // Default initial capacity
 	if resp.ContentLength > 0 && resp.ContentLength <= maxResponseSize {
 		initialCap = resp.ContentLength
@@ -334,12 +320,12 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 		if n > 0 {
 			totalRead += n
 			if totalRead > maxResponseSize {
-				return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
+				return nil, fmt.Errorf("response too large: exceeded % bytes", maxResponseSize)
 			}
 			body = append(body, buf[:n]...)
 		}
 		if err != nil {
-			if err == io.EOF { // Proper EOF handling
+			if err.Error() == "EOF" {
 				break
 			}
 			return nil, err
@@ -348,6 +334,7 @@ func (c *Client) readRespBody(resp *http.Response) ([]byte, error) {
 
 	return body, nil
 }
+
 func (c *Client) waitForRetry(attempt int) {
 	if attempt < maxRetries-1 {
 		delay := time.Duration(attempt+1) * retryDelay
@@ -381,7 +368,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		}
 	}
 
-	// Build the correct URL for single anime endpoint
 	reqURL := fmt.Sprintf("%s/anime/%d", c.baseURL, id)
 
 	resp, err := c.makeRequest(reqURL)
@@ -389,7 +375,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		return nil, fmt.Errorf("failed to get anime by ID %d: %w", id, err)
 	}
 
-	// Single anime endpoint returns different structure than search
 	var animeResp struct {
 		Data models.AnimeData `json:"data"`
 	}
@@ -398,7 +383,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		return nil, fmt.Errorf("failed to unmarshal anime response for ID %d: %w", id, err)
 	}
 
-	// Cache the result
 	if c.redis != nil {
 		animeJSON, err := json.Marshal(animeResp.Data)
 		if err != nil {
@@ -412,7 +396,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		}
 	}
 
-	// Log successful fetch
 	c.logger.WithFields(logrus.Fields{
 		"anime_id": id,
 		"title":    animeResp.Data.Title,
