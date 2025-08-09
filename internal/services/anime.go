@@ -368,7 +368,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		}
 	}
 
-	// Build the correct URL for single anime endpoint
 	reqURL := fmt.Sprintf("%s/anime/%d", c.baseURL, id)
 
 	resp, err := c.makeRequest(reqURL)
@@ -376,7 +375,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		return nil, fmt.Errorf("failed to get anime by ID %d: %w", id, err)
 	}
 
-	// Single anime endpoint returns different structure than search
 	var animeResp struct {
 		Data models.AnimeData `json:"data"`
 	}
@@ -385,7 +383,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		return nil, fmt.Errorf("failed to unmarshal anime response for ID %d: %w", id, err)
 	}
 
-	// Cache the result
 	if c.redis != nil {
 		animeJSON, err := json.Marshal(animeResp.Data)
 		if err != nil {
@@ -399,7 +396,6 @@ func (c *Client) GetAnimeByID(id int) (*models.AnimeData, error) {
 		}
 	}
 
-	// Log successful fetch
 	c.logger.WithFields(logrus.Fields{
 		"anime_id": id,
 		"title":    animeResp.Data.Title,
