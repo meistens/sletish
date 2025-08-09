@@ -33,18 +33,15 @@ func main() {
 		port = "8080"
 	}
 
-	// graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// init. DI
 	container, err := container.New(ctx)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to initialize container")
 	}
 	defer container.Close()
 
-	// HTTP Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", handlers.WebhookHandler(container, botToken))
 
@@ -56,7 +53,6 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// start server in goroutine
 	go func() {
 		log.Infof("Bot starting on port %s", port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -64,13 +60,11 @@ func main() {
 		}
 	}()
 
-	// graceful shutdown sigint
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Info("Shutting down server...")
 
-	// with timeout
 	sdCtx, sdCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer sdCancel()
 	if err := server.Shutdown(sdCtx); err != nil {
