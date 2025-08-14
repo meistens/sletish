@@ -292,9 +292,41 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback *models.Call
 		h.handleCallbackViewDetails(ctx, callback, &callbackData, userID, chatID)
 	case "list_page":
 		h.handleCallbackListPage(ctx, callback, &callbackData, userID, chatID)
+	case "cancel_reminder":
+		h.handleCallbackCancelReminder(ctx, callback, &callbackData, userID, chatID)
+
 	default:
 		h.answerCallback(ctx, callback.Id, "❌ Unknown action", false)
 	}
+}
+
+func (h *Handler) handleCallbackCancelReminder(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
+	if data.AnimeID == "" { // Using AnimeID field to store reminder ID
+		h.answerCallback(ctx, callback.Id, "❌ Invalid reminder ID", false)
+		return
+	}
+
+	reminderID, err := strconv.Atoi(data.AnimeID)
+	if err != nil {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid reminder ID", false)
+		return
+	}
+
+	if err := h.reminderService.CancelReminder(userID, reminderID); err != nil {
+		h.logger.WithError(err).Error("Failed to cancel reminder")
+		if strings.Contains(err.Error(), "not found") {
+			h.answerCallback(ctx, callback.Id, "❌ Reminder not found", true)
+		} else {
+			h.answerCallback(ctx, callback.Id, "❌ Failed to cancel reminder", true)
+		}
+		return
+	}
+
+	h.answerCallback(ctx, callback.Id, "✅ Reminder cancelled!", false)
+
+	// Update the message
+	newText := "✅ <b>Reminder cancelled successfully!</b>\n\nUse /reminders to view your remaining reminders."
+	h.editMessage(ctx, chatID, callback.Message.MessageId, newText, nil)
 }
 
 func (h *Handler) handleCallbackAddAnime(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
