@@ -149,6 +149,21 @@ func (s *ReminderService) sendReminderNotification(ctx context.Context, userID, 
 	return SendTelegramMessage(ctx, s.botToken, chatID, notificationText)
 }
 
+func (s *ReminderService) markReminderAsSent(ctx context.Context, reminderID int) error {
+	updateQuery := `
+	UPDATE reminders
+	SET sent = true
+	WHERE id = $1
+	`
+
+	_, err := s.db.Exec(ctx, updateQuery, reminderID)
+	if err != nil {
+		return fmt.Errorf("failed to mark reminder as sent: %w", err)
+	}
+
+	return nil
+}
+
 func (s *ReminderService) CreateReminder(userID string, mediaID int, message string, remindAt time.Time) error {
 	s.logger.WithFields(logrus.Fields{
 		"user_id":   userID,
