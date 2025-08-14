@@ -185,7 +185,7 @@ func (s *ReminderService) CreateReminder(userID string, mediaID int, message str
 	}
 
 	var mediaExists bool
-	err := s.db.QueryRow(context.Background(), "SELECT EXISTS(SELECT 1 FROM media WHERE is = $1)", mediaID).Scan(&mediaExists)
+	err := s.db.QueryRow(context.Background(), "SELECT EXISTS(SELECT 1 FROM media WHERE external_id = $1)", strconv.Itoa(mediaID)).Scan(&mediaExists)
 	if err != nil {
 		return fmt.Errorf("failed to check media existence: %w", err)
 	}
@@ -194,12 +194,14 @@ func (s *ReminderService) CreateReminder(userID string, mediaID int, message str
 	}
 
 	insertQuery := `
-	INSERT INTO reminders (user_id, media_id, message, remind_at, sent, created_at)
-	VALUES ($1, $2, $3, $4, false, $5)
-	RETURNING id
-	`
+    INSERT INTO reminders (user_id, media_id, message, remind_at, sent, created_at)
+    SELECT $1, m.id, $3, $4, false, $5
+    FROM media m
+    WHERE m.external_id = $2
+    RETURNING id
+    `
 	var reminderID int
-	err = s.db.QueryRow(context.Background(), insertQuery, userID, mediaID, message, remindAt, time.Now()).Scan(&reminderID)
+	err = s.db.QueryRow(context.Background(), insertQuery, userID, strconv.Itoa(mediaID), message, remindAt, time.Now()).Scan(&reminderID)
 	if err != nil {
 		return fmt.Errorf("failed to create reminder: %w", err)
 	}
