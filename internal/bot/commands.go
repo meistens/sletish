@@ -8,6 +8,7 @@ import (
 	"sletish/internal/services"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -20,19 +21,21 @@ type BotCommand struct {
 }
 
 type Handler struct {
-	animeService *services.Client
-	userService  *services.UserService
-	logger       *logrus.Logger
-	botToken     string
+	animeService    *services.Client
+	userService     *services.UserService
+	reminderService *services.ReminderService
+	logger          *logrus.Logger
+	botToken        string
 	// UPDATE WITH MORE SERVICES ADDED IN THE FUTURE
 }
 
-func NewHandler(animeService *services.Client, userService *services.UserService, logger *logrus.Logger, botToken string) *Handler {
+func NewHandler(animeService *services.Client, userService *services.UserService, reminderService *services.ReminderService, logger *logrus.Logger, botToken string) *Handler {
 	return &Handler{
-		animeService: animeService,
-		userService:  userService,
-		logger:       logger,
-		botToken:     botToken,
+		animeService:    animeService,
+		userService:     userService,
+		reminderService: reminderService,
+		logger:          logger,
+		botToken:        botToken,
 	}
 }
 
@@ -85,8 +88,179 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 		h.handleUpdate(ctx, command)
 	case "/help":
 		h.handleHelp(ctx, command)
+	case "/remind":
+		h.handleRemind(ctx, command)
+	case "/reminders":
+		h.handleReminders(ctx, command)
 	default:
 		h.sendMessage(ctx, command.ChatID, "Unknown command. Use /help to see available commands")
+	}
+}
+
+func (h *Handler) handleRemind(ctx context.Context, cmd BotCommand) {
+	if len(cmd.Args) < 3 {
+		h.sendMessage(ctx, cmd.ChatID, `<b>Usage:</b> /remind &lt;anime_id&gt; &lt;days&gt; &lt;message&gt;
+
+			<b>Examples:</b>
+			• /remind 5114 7 "Check if new episode is out!"
+			• /remind 16498 30 "Time to rewatch this masterpiece"
+
+			<b>Note:</b> Days IS 1-365`)
+		return
+	}
+
+	animeID, err := strconv.Atoi(cmd.Args[0])
+	if err != nil {
+		h.sendMessage(ctx, cmd.ChatID, "❌ Invalid anime ID. Please use a valid numeric ID from search results.")
+		return
+	}
+
+	days, err := strconv.Atoi(cmd.Args[1])
+	if err != nil || days < 1 || days > 365 {
+		h.sendMessage(ctx, cmd.ChatID, "❌ Invalid number of days. Please use 1-365 days.")
+		return
+	}
+
+	message := strings.Join(cmd.Args[2:], " ")
+	if len(message) > 200 {
+		h.sendMessage(ctx, cmd.ChatID, "❌ Message too long. Please keep it under 200 characters.")
+		return
+	}
+
+	h.sendMessage(ctx, cmd.ChatID, "⏳ Setting up your reminder...")
+
+	remindAt := time.Now().AddDate(0, 0, days)
+
+	if err := h.reminderService.CreateReminder(cmd.UserID, animeID, message, remindAt); err != nil {
+		h.logger.WithError(err).Error("Failed to create reminder")
+
+		if strings.Contains(err.Error(), "does not exist") {
+			h.sendMessage(ctx, cmd.ChatID, "❌ Anime with that ID doesn't exist. Please check the ID from search results.")
+		} else {
+			h.sendMessage(ctx, cmd.ChatID, "❌ Sorry, I couldn't create the reminder. Please try again later.")
+		}
+
+		return
+	}
+
+	h.sendMessage(ctx, cmd.ChatID, fmt.Sprintf("✅ Reminder set! I'll remind you on <b>%s</b> with message: \"%s\"",
+		remindAt.Format("January 2, 2006 at 3:04 PM"), message))
+}
+
+func (h *Handler) handleReminders(ctx context.Context, cmd BotCommand) {
+	showAll := false
+	if len(cmd.Args) > 0 && strings.ToLower(cmd.Args[0]) == "all" {
+		showAll = true
+	}
+
+	reminders, err := h.reminderService.GetUserReminders(cmd.UserID, showAll)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to get user reminders")
+		h.sendMessage(ctx, cmd.ChatID, "❌ Sorry, I couldn't retrieve your reminders. Please try again later.")
+		return
+	}
+
+	if len(reminders) == 0 {
+		if showAll {
+			h.sendMessage(ctx, cmd.ChatID, "📝 You have no reminders.\n\nUse /remind to set up reminders for your anime!")
+		} else {
+			h.sendMessage(ctx, cmd.ChatID, "📝 You have no pending reminders.\n\nUse /reminders all to see all reminders, or /remind to set up new ones!")
+		}
+		return
+	}
+
+	message := h.formatReminders(reminders, showAll)
+	keyboard := h.createRemindersKeyboard(reminders)
+	h.sendMessageWithKeyboard(ctx, cmd.ChatID, message, keyboard)
+}
+
+func (h *Handler) formatReminders(reminders []models.Reminder, showAll bool) string {
+	var message strings.Builder
+
+	if showAll {
+		message.WriteString("<b>📝 All Your Reminders</b>\n\n")
+	} else {
+		message.WriteString("<b>📝 Your Pending Reminders</b>\n\n")
+	}
+
+	now := time.Now()
+	pending := 0
+	sent := 0
+
+	for i, reminder := range reminders {
+		if i >= 10 { // Limit display to 10 reminders
+			message.WriteString(fmt.Sprintf("... and %d more reminders\n", len(reminders)-10))
+			break
+		}
+
+		status := "📅"
+		statusText := "Pending"
+		timeText := reminder.RemindAt.Format("Jan 2, 2006 3:04 PM")
+
+		if reminder.Sent {
+			status = "✅"
+			statusText = "Sent"
+			sent++
+		} else {
+			pending++
+			if reminder.RemindAt.Before(now) {
+				status = "🔔"
+				statusText = "Due"
+			}
+		}
+
+		message.WriteString(fmt.Sprintf("%s <b>%s</b> - %s\n", status, statusText, timeText))
+
+		if reminder.MediaTitle != "" {
+			message.WriteString(fmt.Sprintf("   🎬 <i>%s</i>\n", reminder.MediaTitle))
+		} else {
+			message.WriteString(fmt.Sprintf("   🆔 Anime ID: %d\n", reminder.MediaID))
+		}
+
+		message.WriteString(fmt.Sprintf("   💬 \"%s\"\n", reminder.Message))
+		message.WriteString(fmt.Sprintf("   📅 Created: %s\n\n", reminder.CreatedAt.Format("Jan 2, 2006")))
+	}
+
+	// Summary
+	message.WriteString(fmt.Sprintf("<b>📊 Summary:</b>\n"))
+	if !showAll {
+		message.WriteString(fmt.Sprintf("📅 Pending: %d\n", pending))
+		message.WriteString(fmt.Sprintf("\n💡 <i>Use /reminders all to see all reminders</i>"))
+	} else {
+		message.WriteString(fmt.Sprintf("📅 Pending: %d | ✅ Sent: %d\n", pending, sent))
+	}
+
+	return message.String()
+}
+
+func (h *Handler) createRemindersKeyboard(reminders []models.Reminder) *models.InlineKeyboardMarkup {
+	var rows [][]models.InlineKeyboardButton
+
+	// Show first few pending reminders with cancel option
+	pendingCount := 0
+	for _, reminder := range reminders {
+		if !reminder.Sent && pendingCount < 3 {
+			title := reminder.MediaTitle
+			if title == "" {
+				title = fmt.Sprintf("Anime ID: %d", reminder.MediaID)
+			}
+			if len(title) > 25 {
+				title = title[:25] + "..."
+			}
+
+			cancelRow := []models.InlineKeyboardButton{
+				{
+					Text:         fmt.Sprintf("🗑 Cancel: %s", title),
+					CallbackData: h.createCallbackData("cancel_reminder", strconv.Itoa(reminder.ID), ""),
+				},
+			}
+			rows = append(rows, cancelRow)
+			pendingCount++
+		}
+	}
+
+	return &models.InlineKeyboardMarkup{
+		InlineKeyboard: rows,
 	}
 }
 
