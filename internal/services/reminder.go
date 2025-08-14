@@ -41,6 +41,33 @@ func NewReminderService(db *pgxpool.Pool, logger *logrus.Logger) *ReminderServic
 		logger:   logger,
 		botToken: "",
 	}
+
+	// start worker
+	go service.StartReminderWorker()
+
+	return service
+}
+
+func (s *ReminderService) StartReminderWorker() {
+	s.logger.Info("Starting reminder worker...")
+	s.isRunning = true
+
+	ticker := time.NewTicker(workerInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if !s.isRunning {
+			break
+		}
+
+		s.logger.Debug("Checking for due reminders...")
+
+		if err := s.processDueReminders(); err != nil {
+			s.logger.WithError(err).Error("Error processing due reminders")
+		}
+	}
+
+	s.logger.Info("Reminder worker stopped")
 }
 
 func (s *ReminderService) CreateReminder(userID string, mediaID int, message string, remindAt time.Time) error {
