@@ -130,6 +130,25 @@ func (s *ReminderService) processDueReminders() error {
 	return nil
 }
 
+func (s *ReminderService) sendReminderNotification(ctx context.Context, userID, mediaTitle, externalID, message string, remindAt time.Time) error {
+	chatID, err := strconv.Atoi(userID)
+	if err != nil {
+		return fmt.Errorf("invalid user ID: %w", err)
+	}
+
+	notificationText := fmt.Sprintf(`🔔 <b>Reminder!</b>
+
+🎬 <b>%s</b>
+💬 "%s"
+
+⏰ <i>You set this reminder for %s</i>
+
+<a href="https://myanimelist.net/anime/%s">🔗 View on MyAnimeList</a>`,
+		mediaTitle, message, remindAt.Format("January 2, 2006"), externalID)
+
+	return SendTelegramMessage(ctx, s.botToken, chatID, notificationText)
+}
+
 func (s *ReminderService) CreateReminder(userID string, mediaID int, message string, remindAt time.Time) error {
 	s.logger.WithFields(logrus.Fields{
 		"user_id":   userID,
