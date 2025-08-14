@@ -12,4 +12,5 @@ type Reminder struct {
 	CreatedAt      time.Time `json:"created_at"`
 	MediaTitle     string    `json:"media_title,omitempty"`
 	MediaPosterURL string    `json:"media_poster_url,omitempty"`
+	ExternalID     string    `json:"external_id,omitempty"`
 }

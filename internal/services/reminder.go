@@ -70,6 +70,66 @@ func (s *ReminderService) StartReminderWorker() {
 	s.logger.Info("Reminder worker stopped")
 }
 
+func (s *ReminderService) processDueReminders() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	query := `
+        SELECT r.id, r.user_id, r.media_id, r.message, r.remind_at, m.title, m.external_id
+        FROM reminders r
+        JOIN media m ON r.media_id = m.id
+        WHERE r.sent = false AND r.remind_at <= $1
+        ORDER BY r.remind_at ASC
+        LIMIT 50
+    `
+
+	rows, err := s.db.Query(ctx, query, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to query due reminders: %w", err)
+	}
+	defer rows.Close()
+
+	var processedCount int
+	var errorCount int
+
+	for rows.Next() {
+		var reminder = &models.Reminder{} // using the struct fields that matter instead of rewriting the damn thing
+		err := rows.Scan(reminder.ID, reminder.UserID, reminder.MediaID, reminder.Message, reminder.RemindAt, reminder.MediaTitle, reminder.ExternalID)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to scan reminder row")
+			errorCount++
+			continue
+		}
+
+		if err := s.sendReminderNotification(ctx, reminder.UserID, reminder.MediaTitle, reminder.ExternalID, reminder.Message, reminder.RemindAt); err != nil {
+			s.logger.WithError(err).Error("Failed to send reminder notification")
+			errorCount++
+			continue
+		}
+
+		if err := s.markReminderAsSent(ctx, reminder.ID); err != nil {
+			s.logger.WithError(err).Error("Failed to mark reminder as sent")
+			errorCount++
+			continue
+		}
+
+		processedCount++
+		s.logger.WithFields(logrus.Fields{
+			"reminder_id": reminder.ID,
+			"user_id":     reminder.UserID,
+		}).Info("Reminder sent successfully")
+	}
+
+	if processedCount > 0 || errorCount > 0 {
+		s.logger.WithFields(logrus.Fields{
+			"processed": processedCount,
+			"errors":    errorCount,
+		}).Info("Processed due reminders")
+	}
+
+	return nil
+}
+
 func (s *ReminderService) CreateReminder(userID string, mediaID int, message string, remindAt time.Time) error {
 	s.logger.WithFields(logrus.Fields{
 		"user_id":   userID,
