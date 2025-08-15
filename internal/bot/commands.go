@@ -825,6 +825,8 @@ func (h *Handler) handleHelp(ctx context.Context, cmd BotCommand) {
 <b>/update</b> &lt;anime_id&gt; &lt;new_status&gt; - Update anime status
 <b>/remove</b> &lt;anime_id&gt; - Remove anime from your list
 <b>/profile</b> - View your profile and stats
+<b>/remind</b> &lt;anime_id&gt; &lt;days&gt; &lt;message&gt; - Set reminder
+<b>/reminders</b> [all] - View your reminders
 <b>/help</b> - Show this help message
 
 <b>📊 Valid Statuses:</b>
@@ -840,6 +842,8 @@ func (h *Handler) handleHelp(ctx context.Context, cmd BotCommand) {
 <code>/list completed</code>
 <code>/list watching 2</code>
 <code>/update 16498 completed</code>
+<code>/remind 16498 30 "Time to rewatch!"</code>
+<code>/reminders</code>
 
 Need more help? Just ask!`
 

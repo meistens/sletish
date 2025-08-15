@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sletish/internal/models"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,7 +17,7 @@ import (
 const (
 	reminderCachePrefix = "reminder:user"
 	reminderCacheTTL    = 10 * time.Minute
-	workerInterval      = 30 * time.Minute
+	workerInterval      = 5 * time.Minute
 )
 
 type ReminderService struct {
@@ -35,11 +36,11 @@ type ReminderWorkerStats struct {
 	IsRunning          bool      `json:"is_running"`
 }
 
-func NewReminderService(db *pgxpool.Pool, logger *logrus.Logger) *ReminderService {
-	return &ReminderService{
+func NewReminderService(db *pgxpool.Pool, logger *logrus.Logger, redis *redis.Client, botToken string) *ReminderService {
+	service := &ReminderService{
 		db:       db,
 		logger:   logger,
-		botToken: "",
+		botToken: botToken,
 	}
 
 	// start worker
@@ -239,7 +240,7 @@ func (s *ReminderService) invalidateUserReminderCache(userID string) {
 	}
 }
 
-func (s *ReminderService) GetUserReminder(userID string, includeSent bool) ([]models.Reminder, error) {
+func (s *ReminderService) GetUserReminders(userID string, includeSent bool) ([]models.Reminder, error) {
 	s.logger.WithFields(logrus.Fields{
 		"user_id":      userID,
 		"include_sent": includeSent,
