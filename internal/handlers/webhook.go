@@ -10,9 +10,13 @@ import (
 )
 
 func WebhookHandler(container *container.Container, botToken string) http.HandlerFunc {
+	// set bot token for reminder service
+	container.ReminderService.SetBotToken(botToken)
+
 	commandHandler := bot.NewHandler(
 		container.AnimeService,
 		container.UserService,
+		container.ReminderService, // ORDER OF DEPS MATTER, BEFORE YOU END UP DEBUGGING A NON-ISSUE!!!!
 		container.Logger,
 		botToken,
 	)
