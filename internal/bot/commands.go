@@ -248,10 +248,17 @@ func (h *Handler) createRemindersKeyboard(reminders []models.Reminder) *models.I
 				title = title[:25] + "..."
 			}
 
+			// Create callback data manually since we need reminder ID, not anime ID
+			callbackData := models.CallbackData{
+				Action:  "cancel_reminder",
+				AnimeID: strconv.Itoa(reminder.ID),
+			}
+			jsonData, _ := json.Marshal(callbackData)
+
 			cancelRow := []models.InlineKeyboardButton{
 				{
 					Text:         fmt.Sprintf("🗑 Cancel: %s", title),
-					CallbackData: h.createCallbackData("cancel_reminder", strconv.Itoa(reminder.ID), ""),
+					CallbackData: string(jsonData),
 				},
 			}
 			rows = append(rows, cancelRow)

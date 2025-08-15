@@ -57,7 +57,7 @@ func New(ctx context.Context) (*Container, error) {
 		Logger:          logger,
 		AnimeService:    services.NewClientWithConfig(animeConfig),
 		UserService:     services.NewUserService(db, redisClient, logger, services.NewClient()),
-		ReminderService: services.NewReminderService(db, logger, redisClient, ""),
+		ReminderService: services.NewReminderService(db, logger, redisClient, "", services.NewClientWithConfig(animeConfig)),
 	}, nil
 }
 

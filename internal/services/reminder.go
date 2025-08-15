@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -21,11 +22,12 @@ const (
 )
 
 type ReminderService struct {
-	db        *pgxpool.Pool
-	redis     *redis.Client
-	logger    *logrus.Logger
-	botToken  string
-	isRunning bool
+	db           *pgxpool.Pool
+	redis        *redis.Client
+	logger       *logrus.Logger
+	botToken     string
+	isRunning    bool
+	animeService *Client // needed to ccreate media entries
 }
 
 type ReminderWorkerStats struct {
@@ -36,11 +38,12 @@ type ReminderWorkerStats struct {
 	IsRunning          bool      `json:"is_running"`
 }
 
-func NewReminderService(db *pgxpool.Pool, logger *logrus.Logger, redis *redis.Client, botToken string) *ReminderService {
+func NewReminderService(db *pgxpool.Pool, logger *logrus.Logger, redis *redis.Client, botToken string, animeService *Client) *ReminderService {
 	service := &ReminderService{
-		db:       db,
-		logger:   logger,
-		botToken: botToken,
+		db:           db,
+		logger:       logger,
+		botToken:     botToken,
+		animeService: animeService,
 	}
 
 	// start worker
@@ -185,24 +188,19 @@ func (s *ReminderService) CreateReminder(userID string, mediaID int, message str
 		return fmt.Errorf("reminder time cannot be in the past")
 	}
 
-	var mediaExists bool
-	err := s.db.QueryRow(context.Background(), "SELECT EXISTS(SELECT 1 FROM media WHERE external_id = $1)", strconv.Itoa(mediaID)).Scan(&mediaExists)
+	// Check if media exists by external_id, create if it doesn't exist
+	media, err := s.getOrCreateMediaByExternalID(mediaID)
 	if err != nil {
-		return fmt.Errorf("failed to check media existence: %w", err)
+		return fmt.Errorf("failed to get/create media: %w", err)
 	}
-	if !mediaExists {
-		return fmt.Errorf("media with ID %d does not exist", mediaID)
-	}
-
 	insertQuery := `
-    INSERT INTO reminders (user_id, media_id, message, remind_at, sent, created_at)
-    SELECT $1, m.id, $3, $4, false, $5
-    FROM media m
-    WHERE m.external_id = $2
-    RETURNING id
-    `
+	INSERT INTO reminders (user_id, media_id, message, remind_at, sent, created_at)
+	VALUES ($1, $2, $3, $4, false, $5)
+	RETURNING id
+	`
 	var reminderID int
-	err = s.db.QueryRow(context.Background(), insertQuery, userID, strconv.Itoa(mediaID), message, remindAt, time.Now()).Scan(&reminderID)
+	err = s.db.QueryRow(context.Background(), insertQuery, userID, media.ID, message, remindAt, time.Now()).Scan(&reminderID)
+
 	if err != nil {
 		return fmt.Errorf("failed to create reminder: %w", err)
 	}
@@ -216,6 +214,99 @@ func (s *ReminderService) CreateReminder(userID string, mediaID int, message str
 	}).Info("Reminder created successfully")
 
 	return nil
+}
+
+func (s *ReminderService) getOrCreateMediaByExternalID(animeID int) (*models.Media, error) {
+	query := `
+    SELECT id, external_id, title, type, description, release_date, poster_url, rating, created_at
+    FROM media
+    WHERE external_id = $1
+    `
+
+	var media models.Media
+	var releaseDate pgtype.Text
+	var rating pgtype.Float8
+
+	err := s.db.QueryRow(context.Background(), query, strconv.Itoa(animeID)).Scan(
+		&media.ID,
+		&media.ExternalID,
+		&media.Title,
+		&media.Type,
+		&media.Description,
+		&releaseDate,
+		&media.PosterURL,
+		&rating,
+		&media.CreatedAt,
+	)
+
+	if err == nil {
+		if releaseDate.Valid {
+			media.ReleaseDate = &releaseDate.String
+		}
+		if rating.Valid {
+			media.Rating = &rating.Float64
+		}
+		return &media, nil
+	}
+
+	if err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("database error: %w", err)
+	}
+
+	jikanAnime, err := s.animeService.GetAnimeByID(animeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch anime from API: %w", err)
+	}
+
+	return s.createMediaFromJikan(*jikanAnime)
+}
+
+func (s *ReminderService) createMediaFromJikan(jikanAnime models.AnimeData) (*models.Media, error) {
+	externalID := strconv.Itoa(jikanAnime.MalID)
+	title := jikanAnime.Title
+	description := jikanAnime.Synopsis
+	releaseDate := ""
+	posterURL := ""
+	var rating *float64
+
+	if jikanAnime.Score > 0 {
+		rating = &jikanAnime.Score
+	}
+	if len(jikanAnime.Images.JPG.ImageURL) > 0 {
+		posterURL = jikanAnime.Images.JPG.ImageURL
+	}
+	if len(description) > 1000 {
+		description = description[:1000] + "..."
+	}
+
+	insertQuery := `
+        INSERT INTO media (external_id, title, type, description, release_date, poster_url, rating, created_at)
+        VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8)
+        RETURNING id, external_id, title, type, description, release_date, poster_url, rating, created_at
+    `
+
+	var media models.Media
+	var dbReleaseDate pgtype.Text
+	var dbRating pgtype.Float8
+	now := time.Now()
+
+	err := s.db.QueryRow(context.Background(), insertQuery,
+		externalID, title, "anime", description, releaseDate, posterURL, rating, now).Scan(
+		&media.ID, &media.ExternalID, &media.Title, &media.Type, &media.Description,
+		&dbReleaseDate, &media.PosterURL, &dbRating, &media.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert media: %w", err)
+	}
+
+	if dbReleaseDate.Valid {
+		media.ReleaseDate = &dbReleaseDate.String
+	}
+	if dbRating.Valid {
+		media.Rating = &dbRating.Float64
+	}
+
+	return &media, nil
 }
 
 func (s *ReminderService) invalidateUserReminderCache(userID string) {
