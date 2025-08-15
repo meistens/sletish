@@ -360,3 +360,7 @@ func (s *ReminderService) StopWorker() {
 	s.isRunning = false
 	s.logger.Info("Reminder worker stop requested")
 }
+
+func (s *ReminderService) SetBotToken(botToken string) {
+	s.botToken = botToken
+}

@@ -14,11 +14,12 @@ import (
 )
 
 type Container struct {
-	DB           *pgxpool.Pool
-	Redis        *redis.Client
-	Logger       *logrus.Logger
-	AnimeService *services.Client
-	UserService  *services.UserService
+	DB              *pgxpool.Pool
+	Redis           *redis.Client
+	Logger          *logrus.Logger
+	AnimeService    *services.Client
+	UserService     *services.UserService
+	ReminderService *services.ReminderService
 }
 
 func New(ctx context.Context) (*Container, error) {
@@ -51,11 +52,12 @@ func New(ctx context.Context) (*Container, error) {
 	}
 
 	return &Container{
-		DB:           db,
-		Redis:        redisClient,
-		Logger:       logger,
-		AnimeService: services.NewClientWithConfig(animeConfig),
-		UserService:  services.NewUserService(db, redisClient, logger, services.NewClient()),
+		DB:              db,
+		Redis:           redisClient,
+		Logger:          logger,
+		AnimeService:    services.NewClientWithConfig(animeConfig),
+		UserService:     services.NewUserService(db, redisClient, logger, services.NewClient()),
+		ReminderService: services.NewReminderService(db, logger, redisClient, ""),
 	}, nil
 }
 
