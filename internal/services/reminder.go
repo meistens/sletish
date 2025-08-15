@@ -321,3 +321,30 @@ func (s *ReminderService) GetUserReminder(userID string, includeSent bool) ([]mo
 
 	return reminders, nil
 }
+
+func (s *ReminderService) CancelReminder(userID string, reminderID int) error {
+	deleteQuery := `
+	DELETE FROM reminders
+	WHERE id = $1
+	AND user_id = $2
+	AND sent = false
+	`
+
+	result, err := s.db.Exec(context.Background(), deleteQuery, reminderID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to cancel reminder: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("reminder not found or already sent")
+	}
+
+	s.invalidateUserReminderCache(userID)
+
+	s.logger.WithFields(logrus.Fields{
+		"reminder_id": reminderID,
+		"user_id":     userID,
+	}).Info("Reminder cancelled successfully")
+
+	return nil
+}
