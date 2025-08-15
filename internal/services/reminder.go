@@ -348,3 +348,15 @@ func (s *ReminderService) CancelReminder(userID string, reminderID int) error {
 
 	return nil
 }
+
+func (s *ReminderService) GetWorkerStats() ReminderWorkerStats {
+	return ReminderWorkerStats{
+		IsRunning: s.isRunning,
+		LastRun:   time.Now(),
+	}
+}
+
+func (s *ReminderService) StopWorker() {
+	s.isRunning = false
+	s.logger.Info("Reminder worker stop requested")
+}
