@@ -8,6 +8,7 @@ import (
 	"sletish/internal/services"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -20,19 +21,21 @@ type BotCommand struct {
 }
 
 type Handler struct {
-	animeService *services.Client
-	userService  *services.UserService
-	logger       *logrus.Logger
-	botToken     string
+	animeService    *services.Client
+	userService     *services.UserService
+	reminderService *services.ReminderService
+	logger          *logrus.Logger
+	botToken        string
 	// UPDATE WITH MORE SERVICES ADDED IN THE FUTURE
 }
 
-func NewHandler(animeService *services.Client, userService *services.UserService, logger *logrus.Logger, botToken string) *Handler {
+func NewHandler(animeService *services.Client, userService *services.UserService, reminderService *services.ReminderService, logger *logrus.Logger, botToken string) *Handler {
 	return &Handler{
-		animeService: animeService,
-		userService:  userService,
-		logger:       logger,
-		botToken:     botToken,
+		animeService:    animeService,
+		userService:     userService,
+		reminderService: reminderService,
+		logger:          logger,
+		botToken:        botToken,
 	}
 }
 
@@ -85,8 +88,186 @@ func (h *Handler) ProcessMessage(ctx context.Context, update *models.Update) {
 		h.handleUpdate(ctx, command)
 	case "/help":
 		h.handleHelp(ctx, command)
+	case "/remind":
+		h.handleRemind(ctx, command)
+	case "/reminders":
+		h.handleReminders(ctx, command)
 	default:
 		h.sendMessage(ctx, command.ChatID, "Unknown command. Use /help to see available commands")
+	}
+}
+
+func (h *Handler) handleRemind(ctx context.Context, cmd BotCommand) {
+	if len(cmd.Args) < 3 {
+		h.sendMessage(ctx, cmd.ChatID, `<b>Usage:</b> /remind &lt;anime_id&gt; &lt;days&gt; &lt;message&gt;
+
+			<b>Examples:</b>
+			• /remind 5114 7 "Check if new episode is out!"
+			• /remind 16498 30 "Time to rewatch this masterpiece"
+
+			<b>Note:</b> Days IS 1-365`)
+		return
+	}
+
+	animeID, err := strconv.Atoi(cmd.Args[0])
+	if err != nil {
+		h.sendMessage(ctx, cmd.ChatID, "❌ Invalid anime ID. Please use a valid numeric ID from search results.")
+		return
+	}
+
+	days, err := strconv.Atoi(cmd.Args[1])
+	if err != nil || days < 1 || days > 365 {
+		h.sendMessage(ctx, cmd.ChatID, "❌ Invalid number of days. Please use 1-365 days.")
+		return
+	}
+
+	message := strings.Join(cmd.Args[2:], " ")
+	if len(message) > 200 {
+		h.sendMessage(ctx, cmd.ChatID, "❌ Message too long. Please keep it under 200 characters.")
+		return
+	}
+
+	h.sendMessage(ctx, cmd.ChatID, "⏳ Setting up your reminder...")
+
+	remindAt := time.Now().AddDate(0, 0, days)
+
+	if err := h.reminderService.CreateReminder(cmd.UserID, animeID, message, remindAt); err != nil {
+		h.logger.WithError(err).Error("Failed to create reminder")
+
+		if strings.Contains(err.Error(), "does not exist") {
+			h.sendMessage(ctx, cmd.ChatID, "❌ Anime with that ID doesn't exist. Please check the ID from search results.")
+		} else {
+			h.sendMessage(ctx, cmd.ChatID, "❌ Sorry, I couldn't create the reminder. Please try again later.")
+		}
+
+		return
+	}
+
+	h.sendMessage(ctx, cmd.ChatID, fmt.Sprintf("✅ Reminder set! I'll remind you on <b>%s</b> with message: \"%s\"",
+		remindAt.Format("January 2, 2006 at 3:04 PM"), message))
+}
+
+func (h *Handler) handleReminders(ctx context.Context, cmd BotCommand) {
+	showAll := false
+	if len(cmd.Args) > 0 && strings.ToLower(cmd.Args[0]) == "all" {
+		showAll = true
+	}
+
+	reminders, err := h.reminderService.GetUserReminders(cmd.UserID, showAll)
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to get user reminders")
+		h.sendMessage(ctx, cmd.ChatID, "❌ Sorry, I couldn't retrieve your reminders. Please try again later.")
+		return
+	}
+
+	if len(reminders) == 0 {
+		if showAll {
+			h.sendMessage(ctx, cmd.ChatID, "📝 You have no reminders.\n\nUse /remind to set up reminders for your anime!")
+		} else {
+			h.sendMessage(ctx, cmd.ChatID, "📝 You have no pending reminders.\n\nUse /reminders all to see all reminders, or /remind to set up new ones!")
+		}
+		return
+	}
+
+	message := h.formatReminders(reminders, showAll)
+	keyboard := h.createRemindersKeyboard(reminders)
+	h.sendMessageWithKeyboard(ctx, cmd.ChatID, message, keyboard)
+}
+
+func (h *Handler) formatReminders(reminders []models.Reminder, showAll bool) string {
+	var message strings.Builder
+
+	if showAll {
+		message.WriteString("<b>📝 All Your Reminders</b>\n\n")
+	} else {
+		message.WriteString("<b>📝 Your Pending Reminders</b>\n\n")
+	}
+
+	now := time.Now()
+	pending := 0
+	sent := 0
+
+	for i, reminder := range reminders {
+		if i >= 10 { // Limit display to 10 reminders
+			message.WriteString(fmt.Sprintf("... and %d more reminders\n", len(reminders)-10))
+			break
+		}
+
+		status := "📅"
+		statusText := "Pending"
+		timeText := reminder.RemindAt.Format("Jan 2, 2006 3:04 PM")
+
+		if reminder.Sent {
+			status = "✅"
+			statusText = "Sent"
+			sent++
+		} else {
+			pending++
+			if reminder.RemindAt.Before(now) {
+				status = "🔔"
+				statusText = "Due"
+			}
+		}
+
+		message.WriteString(fmt.Sprintf("%s <b>%s</b> - %s\n", status, statusText, timeText))
+
+		if reminder.MediaTitle != "" {
+			message.WriteString(fmt.Sprintf("   🎬 <i>%s</i>\n", reminder.MediaTitle))
+		} else {
+			message.WriteString(fmt.Sprintf("   🆔 Anime ID: %d\n", reminder.MediaID))
+		}
+
+		message.WriteString(fmt.Sprintf("   💬 \"%s\"\n", reminder.Message))
+		message.WriteString(fmt.Sprintf("   📅 Created: %s\n\n", reminder.CreatedAt.Format("Jan 2, 2006")))
+	}
+
+	// Summary
+	message.WriteString(fmt.Sprintf("<b>📊 Summary:</b>\n"))
+	if !showAll {
+		message.WriteString(fmt.Sprintf("📅 Pending: %d\n", pending))
+		message.WriteString(fmt.Sprintf("\n💡 <i>Use /reminders all to see all reminders</i>"))
+	} else {
+		message.WriteString(fmt.Sprintf("📅 Pending: %d | ✅ Sent: %d\n", pending, sent))
+	}
+
+	return message.String()
+}
+
+func (h *Handler) createRemindersKeyboard(reminders []models.Reminder) *models.InlineKeyboardMarkup {
+	var rows [][]models.InlineKeyboardButton
+
+	// Show first few pending reminders with cancel option
+	pendingCount := 0
+	for _, reminder := range reminders {
+		if !reminder.Sent && pendingCount < 3 {
+			title := reminder.MediaTitle
+			if title == "" {
+				title = fmt.Sprintf("Anime ID: %d", reminder.MediaID)
+			}
+			if len(title) > 25 {
+				title = title[:25] + "..."
+			}
+
+			// Create callback data manually since we need reminder ID, not anime ID
+			callbackData := models.CallbackData{
+				Action:  "cancel_reminder",
+				AnimeID: strconv.Itoa(reminder.ID),
+			}
+			jsonData, _ := json.Marshal(callbackData)
+
+			cancelRow := []models.InlineKeyboardButton{
+				{
+					Text:         fmt.Sprintf("🗑 Cancel: %s", title),
+					CallbackData: string(jsonData),
+				},
+			}
+			rows = append(rows, cancelRow)
+			pendingCount++
+		}
+	}
+
+	return &models.InlineKeyboardMarkup{
+		InlineKeyboard: rows,
 	}
 }
 
@@ -118,9 +299,41 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback *models.Call
 		h.handleCallbackViewDetails(ctx, callback, &callbackData, userID, chatID)
 	case "list_page":
 		h.handleCallbackListPage(ctx, callback, &callbackData, userID, chatID)
+	case "cancel_reminder":
+		h.handleCallbackCancelReminder(ctx, callback, &callbackData, userID, chatID)
+
 	default:
 		h.answerCallback(ctx, callback.Id, "❌ Unknown action", false)
 	}
+}
+
+func (h *Handler) handleCallbackCancelReminder(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
+	if data.AnimeID == "" { // Using AnimeID field to store reminder ID
+		h.answerCallback(ctx, callback.Id, "❌ Invalid reminder ID", false)
+		return
+	}
+
+	reminderID, err := strconv.Atoi(data.AnimeID)
+	if err != nil {
+		h.answerCallback(ctx, callback.Id, "❌ Invalid reminder ID", false)
+		return
+	}
+
+	if err := h.reminderService.CancelReminder(userID, reminderID); err != nil {
+		h.logger.WithError(err).Error("Failed to cancel reminder")
+		if strings.Contains(err.Error(), "not found") {
+			h.answerCallback(ctx, callback.Id, "❌ Reminder not found", true)
+		} else {
+			h.answerCallback(ctx, callback.Id, "❌ Failed to cancel reminder", true)
+		}
+		return
+	}
+
+	h.answerCallback(ctx, callback.Id, "✅ Reminder cancelled!", false)
+
+	// Update the message
+	newText := "✅ <b>Reminder cancelled successfully!</b>\n\nUse /reminders to view your remaining reminders."
+	h.editMessage(ctx, chatID, callback.Message.MessageId, newText, nil)
 }
 
 func (h *Handler) handleCallbackAddAnime(ctx context.Context, callback *models.CallbackQuery, data *models.CallbackData, userID, chatID string) {
@@ -619,6 +832,8 @@ func (h *Handler) handleHelp(ctx context.Context, cmd BotCommand) {
 <b>/update</b> &lt;anime_id&gt; &lt;new_status&gt; - Update anime status
 <b>/remove</b> &lt;anime_id&gt; - Remove anime from your list
 <b>/profile</b> - View your profile and stats
+<b>/remind</b> &lt;anime_id&gt; &lt;days&gt; &lt;message&gt; - Set reminder
+<b>/reminders</b> [all] - View your reminders
 <b>/help</b> - Show this help message
 
 <b>📊 Valid Statuses:</b>
@@ -634,19 +849,24 @@ func (h *Handler) handleHelp(ctx context.Context, cmd BotCommand) {
 <code>/list completed</code>
 <code>/list watching 2</code>
 <code>/update 16498 completed</code>
+<code>/remind 16498 30 "Time to rewatch!"</code>
+<code>/reminders</code>
 
 Need more help? Just ask!`
 
 	h.sendMessage(ctx, cmd.ChatID, helpMessage)
 }
 
+// Keyboard creation methods
 func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models.InlineKeyboardMarkup {
 	var rows [][]models.InlineKeyboardButton
 
+	// Add quick action buttons for first result
 	if len(animes) > 0 {
 		firstAnime := animes[0]
 		animeID := strconv.Itoa(firstAnime.MalID)
 
+		// Status selection row
 		statusRow := []models.InlineKeyboardButton{
 			{
 				Text:         "📝 Watchlist",
@@ -659,6 +879,7 @@ func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models
 		}
 		rows = append(rows, statusRow)
 
+		// More status options
 		statusRow2 := []models.InlineKeyboardButton{
 			{
 				Text:         "✅ Completed",
@@ -671,6 +892,7 @@ func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models
 		}
 		rows = append(rows, statusRow2)
 
+		// Details and external link row
 		detailsRow := []models.InlineKeyboardButton{
 			{
 				Text:         "📖 Details",
@@ -688,6 +910,86 @@ func (h *Handler) createSearchResultsKeyboard(animes []models.AnimeData) *models
 		InlineKeyboard: rows,
 	}
 }
+
+// Too much clutter, keep just-in-case
+// func (h *Handler) createUserListKeyboard(userList []models.UserMediaWithDetails, filterStatus models.Status) *models.InlineKeyboardMarkup {
+// 	var rows [][]models.InlineKeyboardButton
+
+// 	// If showing a single status, add management buttons for first few items
+// 	if filterStatus != "" && len(userList) > 0 {
+// 		for i, item := range userList {
+// 			if i >= 3 { // Limit to first 3 items to avoid too many buttons
+// 				break
+// 			}
+
+// 			animeID := item.Media.ExternalID
+// 			title := item.Media.Title
+// 			if len(title) > 20 {
+// 				title = title[:20] + "..."
+// 			}
+
+// 			// Status update buttons
+// 			statusRow := []models.InlineKeyboardButton{
+// 				{
+// 					Text:         fmt.Sprintf("📝 %s", title),
+// 					CallbackData: h.createCallbackData("view_details", animeID, ""),
+// 				},
+// 			}
+
+// 			// Add status change button based on current status
+// 			switch item.UserMedia.Status {
+// 			case models.StatusWatching:
+// 				statusRow = append(statusRow, models.InlineKeyboardButton{
+// 					Text:         "✅ Complete",
+// 					CallbackData: h.createCallbackData("update_status", animeID, "completed"),
+// 				})
+// 			case models.StatusWatchlist:
+// 				statusRow = append(statusRow, models.InlineKeyboardButton{
+// 					Text:         "👀 Start Watching",
+// 					CallbackData: h.createCallbackData("update_status", animeID, "watching"),
+// 				})
+// 			case models.StatusCompleted:
+// 				statusRow = append(statusRow, models.InlineKeyboardButton{
+// 					Text:         "🗑 Remove",
+// 					CallbackData: h.createCallbackData("remove_anime", animeID, ""),
+// 				})
+// 			}
+
+// 			rows = append(rows, statusRow)
+// 		}
+// 	}
+
+// 	// Filter buttons row
+// 	if filterStatus == "" {
+// 		filterRow := []models.InlineKeyboardButton{
+// 			{
+// 				Text:         "👀 Watching",
+// 				CallbackData: h.createCallbackData("list_page", "", "watching"),
+// 			},
+// 			{
+// 				Text:         "✅ Completed",
+// 				CallbackData: h.createCallbackData("list_page", "", "completed"),
+// 			},
+// 		}
+// 		rows = append(rows, filterRow)
+
+// 		filterRow2 := []models.InlineKeyboardButton{
+// 			{
+// 				Text:         "📝 Watchlist",
+// 				CallbackData: h.createCallbackData("list_page", "", "watchlist"),
+// 			},
+// 			{
+// 				Text:         "⏸ On Hold",
+// 				CallbackData: h.createCallbackData("list_page", "", "on_hold"),
+// 			},
+// 		}
+// 		rows = append(rows, filterRow2)
+// 	}
+
+// 	return &models.InlineKeyboardMarkup{
+// 		InlineKeyboard: rows,
+// 	}
+// }
 
 func (h *Handler) createAnimeDetailsKeyboard(animeID string) *models.InlineKeyboardMarkup {
 	rows := [][]models.InlineKeyboardButton{
@@ -730,6 +1032,7 @@ func (h *Handler) createCallbackData(action, animeID, status string) string {
 	return string(jsonData)
 }
 
+// Enhanced formatting methods
 func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 	if len(animes) == 0 {
 		return "No anime found for your search query."
@@ -738,6 +1041,7 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 	var message strings.Builder
 	message.WriteString("<b>🔍 Search Results</b>\n\n")
 
+	// Show detailed info for first result
 	anime := animes[0]
 	message.WriteString(fmt.Sprintf("<b>%s</b>\n", anime.Title))
 	message.WriteString(fmt.Sprintf("🆔 ID: <code>%d</code>", anime.MalID))
@@ -753,6 +1057,7 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 	}
 	message.WriteString("\n")
 
+	// Type and Status
 	var details []string
 	if anime.Type != "" {
 		details = append(details, fmt.Sprintf("📱 %s", anime.Type))
@@ -764,6 +1069,7 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 		message.WriteString(strings.Join(details, " | ") + "\n")
 	}
 
+	// Synopsis (shortened)
 	if anime.Synopsis != "" {
 		synopsis := anime.Synopsis
 		if len(synopsis) > 200 {
@@ -772,6 +1078,7 @@ func (h *Handler) formatSearchResults(animes []models.AnimeData) string {
 		message.WriteString(fmt.Sprintf("📝 %s\n", synopsis))
 	}
 
+	// Show other results briefly
 	if len(animes) > 1 {
 		message.WriteString(fmt.Sprintf("\n<b>Other Results (%d more):</b>\n", len(animes)-1))
 		for i, otherAnime := range animes[1:] {
@@ -836,9 +1143,27 @@ func (h *Handler) formatAnimeDetails(anime models.AnimeData) string {
 	return message.String()
 }
 
+// Helper functions to safely get float64 value from pointer
+func getFloatValue(f *float64) float64 {
+	if f == nil {
+		return 0
+	}
+	return *f
+}
+
+func getStringValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// End
+
 func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, statusFilter string, page, total, limit int) string {
 	var message strings.Builder
 
+	// Calculate pagination info
 	totalPages := (total + limit - 1) / limit
 	start := (page-1)*limit + 1
 	end := start + len(userList) - 1
@@ -851,12 +1176,14 @@ func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, statusF
 
 	message.WriteString(fmt.Sprintf("📄 Page %d of %d | Items %d-%d of %d\n\n", page, totalPages, start, end, total))
 
+	// Group by status if showing all
 	if statusFilter == "" {
 		statusGroups := make(map[models.Status][]models.UserMediaWithDetails)
 		for _, item := range userList {
 			statusGroups[item.UserMedia.Status] = append(statusGroups[item.UserMedia.Status], item)
 		}
 
+		// Order statuses logically
 		orderedStatuses := []models.Status{
 			models.StatusWatching,
 			models.StatusCompleted,
@@ -881,15 +1208,18 @@ func (h *Handler) formatUserList(userList []models.UserMediaWithDetails, statusF
 			message.WriteString("\n")
 		}
 	} else {
+		// Show detailed list for specific status
 		statusEmoji := getStatusEmoji(models.Status(statusFilter))
 		for _, item := range userList {
 			message.WriteString(fmt.Sprintf("%s <b>%s</b>\n", statusEmoji, item.Media.Title))
 			message.WriteString(fmt.Sprintf("   🆔 ID: %s", item.Media.ExternalID))
 
+			// Handle nullable rating for Media
 			if item.Media.Rating != nil && *item.Media.Rating > 0 {
 				message.WriteString(fmt.Sprintf(" | ⭐ %.1f", *item.Media.Rating))
 			}
 
+			// Handle nullable release date
 			if item.Media.ReleaseDate != nil && *item.Media.ReleaseDate != "" {
 				message.WriteString(fmt.Sprintf(" | 📅 %s", *item.Media.ReleaseDate))
 			}
@@ -923,6 +1253,7 @@ func getStatusEmoji(status models.Status) string {
 	}
 }
 
+// Message sending methods
 func (h *Handler) sendMessage(ctx context.Context, chatID, text string) {
 	h.sendMessageWithKeyboard(ctx, chatID, text, nil)
 }
@@ -960,6 +1291,7 @@ func (h *Handler) editMessage(ctx context.Context, chatID string, messageID int,
 			"error":      err.Error(),
 		}).Error("Failed to edit message")
 
+		// Fallback: send new message if edit fails
 		h.sendMessageWithKeyboard(ctx, chatID, text, keyboard)
 	} else {
 		h.logger.WithFields(logrus.Fields{

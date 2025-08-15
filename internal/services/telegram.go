@@ -228,6 +228,8 @@ func SetBotCommands(ctx context.Context, botToken string) error {
 		{Command: "remove", Description: "🗑 Remove anime from your list"},
 		{Command: "profile", Description: "👤 View your profile and stats"},
 		{Command: "help", Description: "❓ Show help and available commands"},
+		{Command: "remind", Description: "⏰ Set reminder for anime"},
+		{Command: "reminders", Description: "📝 View your reminders"},
 	}
 
 	payload := map[string]interface{}{
